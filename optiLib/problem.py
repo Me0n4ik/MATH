@@ -21,14 +21,21 @@ class OptimizationProblem:
         self.vector_length = len
 
     def generate_random_solution(self):
-        if self.bounds is not None:
-            lower_bounds, upper_bounds = self.bounds[:, 0], self.bounds[:, 1]
-            return np.random.uniform(lower_bounds, upper_bounds, self.vector_length).astype(self.dtype)
+        if np.random.random() < 0.7:
+            net_nodes = self.network_graph.graph.number_of_nodes()
+            tasks = self.task_graph.graph.number_of_nodes()
+            num_to_select = np.random.randint(1, net_nodes + 1)
+            nods_to_select = np.random.choice([i for i in range(net_nodes)], size=num_to_select, replace=False)
+            return np.random.choice(nods_to_select, size=tasks)
         else:
-            return np.zeros(self.vector_length, dtype=self.dtype)
+            if self.bounds is not None:
+                lower_bounds, upper_bounds = self.bounds[:, 0], self.bounds[:, 1]
+                return np.random.uniform(lower_bounds, upper_bounds, self.vector_length).astype(self.dtype)
+            else:
+                return np.zeros(self.vector_length, dtype=self.dtype)
 
-
-
+    def get_info(self, vector=None):
+        return {**{f.__name__:f(vector, self) for f in self.f_objective}, **{f.__name__:f(vector, self) for f in self.f_constraints}, 'Свертка': self.evaluate(vector)}
 
     def evaluate_objectives(self, vector=None):
         """Оценивает все целевые функции на заданном векторе. Возвращает список значений.""" 
@@ -50,7 +57,7 @@ class OptimizationProblem:
         solution = self.constrain_elements(solution)
         if self.is_feasible(solution):
             return self.convolution_evaluate_objectives(solution)
-        return - np.inf
+        return np.inf
     
     def constrain_elements(self, vector):
         """Приводит элементы вектора к ближайшим допустимым значениям в соответствии с ограничениями."""
@@ -81,11 +88,19 @@ class NetNode:
     eMax: int = 1
 
 class NetGraph:
-    def __init__(self, martx, net_power = (1500, 2500), e0 = (0,70), emax = (70,100)) -> None:
-        self.nodes = [NetNode(p, e1, e2) for p, e1, e2 in zip(  np.random.randint(net_power[0], net_power[1]),\
-                                                                np.random.randint(e0[0], e0[1]), \
-                                                                np.random.randint(emax[0], emax[1]))]
+    def __init__(self, martx, net_power = (100, 2500), e0 = (0,70), emax = (70,100)) -> None:
         self.graph = nx.Graph(np.array(martx))
+        self.nodes = [NetNode(np.random.randint(net_power[0], net_power[1]), np.random.randint(e0[0], e0[1]), np.random.randint(emax[0], emax[1])) \
+                      for _ in range(self.graph.number_of_nodes())]
+        self.nodes[0] = NetNode(200, 100, 200)
+        
+    def __str__(self) -> str:
+        return '\n'.join([f'{node}' for node in self.nodes])
+    
+    def print(self):
+        pos = nx.spring_layout(self.graph, seed=100)
+        nx.draw(self.graph, pos, with_labels=True, font_color='white')
+
 
 @dataclass
 class TaskNode:
@@ -94,10 +109,24 @@ class TaskNode:
 class TaskGraph:
     def __init__(self, martx, w = (100,600)) -> None:
         self.graph = nx.DiGraph(np.array(martx))
-        self.operations = [TaskNode(np.random.randint(w[0], w[1])) for _ in self.graph.number_of_nodes()]
+        self.operations = [TaskNode(np.random.randint(w[0], w[1])) for _ in range(self.graph.number_of_nodes())]
+
+    def __str__(self) -> str:
+        return '\n'.join([f'{o}' for o in self.operations])
+    
+    def print(self):
+        options = {
+            'width': 1,
+            'arrowstyle': '-|>',
+            'arrowsize': 18,
+        }
+
+        pos = nx.planar_layout(self.graph, center = [10, 10], scale = 20)
+        nx.draw(self.graph, pos, with_labels=True, font_color='white', **options)
+        nx.draw_networkx_edge_labels(self.graph, pos, {(x, y): z['weight'] for (x, y, z) in nx.to_edgelist(self.graph)},font_color='red')
 
 class NetworkOptimizationProblem(OptimizationProblem):
-    def __init__(self, network_graph, task_graph, f_objective, f_constraints=None, bounds=None, dtype = int):
+    def __init__(self, network_graph, task_graph, f_objective, f_constraints=None, bounds=None, dtype = int, t_lim = 20):
         """
         :param network_graph: Граф сети, представленный с помощью NetGraph.
         :param task_graph: Граф задач, представленный с помощью TaskGraph.
@@ -105,60 +134,14 @@ class NetworkOptimizationProblem(OptimizationProblem):
         :param f_constraints: Список функций-ограничений, которым должно соответствовать распределение.
         :param v_constraints: Список ограничений, которым должен соответствовать вектор (например, размер сети).
         """
-        len_v =task_graph.number_of_nodes()
+        len_v = task_graph.graph.number_of_nodes()
         if bounds is None:
-            constraints = [(0, network_graph.number_of_nodes() - 1) for _ in range(task_graph.number_of_nodes())],
+            constraints = [(0, network_graph.graph.number_of_nodes() - 1) for _ in range(len_v)]
         else:
-            constraints = [(0, network_graph.number_of_nodes() - 1) for _ in range(task_graph.number_of_nodes())]
+            constraints = [(0, network_graph.graph.number_of_nodes() - 1) for _ in range(len_v)]
             for node, constr in bounds.items():
                 constraints[node] = constr
-
         super().__init__(f_objective, f_constraints, bounds=constraints, dtype=dtype, len=len_v)
         self.network_graph = network_graph
         self.task_graph = task_graph
-
-    def network_status_calculation(self, vector):
-        # Подсчет трудоемкости
-        W = [0 for _ in range(self.network_graph.graph.number_of_nodes())]
-        # Сколько каждый узел должен обработать задач
-        v_task_to_node = [0 for _ in range(self.network_graph.graph.number_of_nodes())]
-        # Сколько каждый узел должен отправить
-        v_sent_to_node = [0 for _ in range(self.network_graph.graph.number_of_nodes())]
-        # Сколько каждый узел должен принять
-        v_reseive_to_node = [0 for _ in range(self.network_graph.graph.number_of_nodes())]
-
-        for start, end, weight in nx.to_edgelist(self.task_graph.graph):
-            """
-            start - задача начало
-            end - задача конец
-            weight - то сколько должено быть прередано из одной задачи в другую
-            """
-            if not len(paths[str(start) + str(end)]) == 1:
-                temp = paths[str(start) + str(end)].copy()
-                # task_weight - нагрузка на выполнение задачи
-                #Оброботка нагрузки начала пути
-
-                W[temp[0]] += self.task_graph.operations[start].w + weight['weight']
-
-                v_sent_to_node[temp[0]] += weight['weight']
-                v_task_to_node[temp[0]] += self.task_graph.operations[start].w
-                #Оброботка нагрузки конца пути
-
-                self.W[temp[-1]] += self.task_graph.operations[end].w + weight['weight']
-
-                self.v_reseive_to_node[temp[-1]] += weight['weight']
-                self.v_task_to_node[temp[-1]] += self.task_graph.operations[start].w
-
-                temp.pop(0)
-                temp.pop(-1)
-                # Оброботка нагрузки всех остальных узлов в пути
-                for i in temp:
-                    W[i] += 2 * weight['weight']
-                    v_sent_to_node[i] += weight['weight']
-                    v_reseive_to_node[i] += weight['weight']
-            else:
-                W[self.distribution[start]] += self.task_graph.operations[start].w
-                v_task_to_node[self.distribution[start]] += self.task_graph.operations[start].w
-
-                W[self.distribution[end]] += self.task_graph.operations[end].w
-                v_task_to_node[self.distribution[end]] += self.task_graph.operations[end].w
+        self.t_lim = t_lim
