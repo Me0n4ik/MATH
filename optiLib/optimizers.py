@@ -36,8 +36,8 @@ class RandomSearchOptimizer(Optimizer):
         self.algo_name = "RS"
 
     def optimize(self):
-        best_solution = None
-        best_value = float('inf')
+        best_solution = self.problem.generate_random_solution()
+        best_value = self.problem.evaluate(best_solution)
 
         for _ in tqdm(range(self.iterations), desc="Optimizing"):
             solution = self.problem.generate_random_solution()
@@ -120,5 +120,5 @@ class GreedyOptimizer(Optimizer):
                 if score < global_best_value:
                     global_best_position = new_solution
                     global_best_value = score
-                self.update_history(task_id+node_id, global_best_value)
+                self.update_history(task_id+node_id, global_best_position)
         return global_best_position, global_best_value
