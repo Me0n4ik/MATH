@@ -26,7 +26,7 @@ class Optimizer:
         df = pd.DataFrame(transformed_data)
 
         # Экспорт DataFrame в Excel файл
-        df.to_excel(f'{self.algo_name}.xlsx', index=False)
+        df.to_excel(f'./data/{self.algo_name}.xlsx', index=False)
 
 
 class RandomSearchOptimizer(Optimizer):
