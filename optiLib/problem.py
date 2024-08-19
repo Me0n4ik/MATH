@@ -3,10 +3,10 @@
 import numpy as np
 import networkx as nx
 from dataclasses import dataclass
-from helpers import check_vector
+import functools
 
 class OptimizationProblem:
-    def __init__(self, f_objective, f_constraints=None, bounds=None, dtype = int):
+    def __init__(self, f_objective, f_constraints=None, bounds=None, dtype = int, len = 10):
         """
         :param initial_vector: Исходный вектор, который мы оптимизируем.
         :param f_objective: Список целевых функций, которые мы хотим оптимизировать.
@@ -17,18 +17,29 @@ class OptimizationProblem:
         self.f_constraints = f_constraints if f_constraints is not None else []
         self.vector_length = None
         self.bounds = np.array(bounds) if bounds is not None else None
+        self.dtype = dtype
+        self.vector_length = len
 
-    def set_vector_length(self, length):
-        self.vector_length = length
+    def generate_random_solution(self):
+        if self.bounds is not None:
+            lower_bounds, upper_bounds = self.bounds[:, 0], self.bounds[:, 1]
+            return np.random.uniform(lower_bounds, upper_bounds, self.vector_length).astype(self.dtype)
+        else:
+            return np.zeros(self.vector_length, dtype=self.dtype)
+
+
+
 
     def evaluate_objectives(self, vector=None):
         """Оценивает все целевые функции на заданном векторе. Возвращает список значений.""" 
         return [f(vector, self) for f in self.f_objective]
     
     def convolution_evaluate_objectives(self, vector=None):
+        """Выдает свертку целевых функций по заданому вветору"""
         return np.prod([f(vector, self) for f in self.f_objective])
 
     def expanded_constraints(self, vector=None):
+        """Проверяет выполнение функций-условий по заданому вектору. Возращает булевый вектор."""
         return [c(vector, self) for c in self.f_constraints]
 
     def check_constraints(self, vector=None):
@@ -36,43 +47,31 @@ class OptimizationProblem:
         return all(c(vector, self) for c in self.f_constraints)
 
     def evaluate(self, solution):
-        if self.vector_length is None:
-            self.vector_length = len(solution)
+        solution = self.constrain_elements(solution)
         if self.is_feasible(solution):
-            return self.evaluate_objectives(solution)
+            return self.convolution_evaluate_objectives(solution)
         return - np.inf
     
+    def constrain_elements(self, vector):
+        """Приводит элементы вектора к ближайшим допустимым значениям в соответствии с ограничениями."""
+        vector = np.array(vector).astype(self.dtype)
+
+        if self.bounds is not None:
+            lower_bounds, upper_bounds = self.bounds[:, 0], self.bounds[:, 1]
+            return np.clip(vector, lower_bounds, upper_bounds)
+        return vector
+
     def is_feasible(self, solution):
-        if self.vector_length is None:
-            self.vector_length = len(solution)
         if len(solution) != self.vector_length:
             return False
-        return all(constraint(solution) for constraint in self.constraints)
+        return self.check_constraints(solution)
 
 class IntegerOptimizationProblem(OptimizationProblem):
-    def __init__(self, objective_function, constraints=None, bounds=None):
-        super().__init__(objective_function, constraints)
-        self.bounds = np.array(bounds) if bounds is not None else None
+    def __init__(self, f_objective, f_constraints=None, bounds=None, len = 10):
+        super().__init__(f_objective, f_constraints=None, bounds=None, dtype = int, len = 10)
 
     def evaluate(self, solution):
-        if self.vector_length is None:
-            self.vector_length = len(solution)
         return super().evaluate(solution)
-
-    def is_feasible(self, solution):
-        solution = np.array(solution)
-        if self.vector_length is None:
-            self.vector_length = len(solution)
-        if len(solution) != self.vector_length:
-            return False
-        if not np.issubdtype(solution.dtype, np.integer):
-            return False
-        if self.bounds is not None and (
-            len(self.bounds) != self.vector_length or 
-            not np.all((self.bounds[:, 0] <= solution) & (solution <= self.bounds[:, 1]))
-        ):
-            return False
-        return super().is_feasible(solution)
 
 
 @dataclass
@@ -98,7 +97,7 @@ class TaskGraph:
         self.operations = [TaskNode(np.random.randint(w[0], w[1])) for _ in self.graph.number_of_nodes()]
 
 class NetworkOptimizationProblem(OptimizationProblem):
-    def __init__(self, network_graph, task_graph, f_objective=[], f_constraints=[], v_constraint={}):
+    def __init__(self, network_graph, task_graph, f_objective, f_constraints=None, bounds=None, dtype = int):
         """
         :param network_graph: Граф сети, представленный с помощью NetGraph.
         :param task_graph: Граф задач, представленный с помощью TaskGraph.
@@ -106,69 +105,60 @@ class NetworkOptimizationProblem(OptimizationProblem):
         :param f_constraints: Список функций-ограничений, которым должно соответствовать распределение.
         :param v_constraints: Список ограничений, которым должен соответствовать вектор (например, размер сети).
         """
-        if len(v_constraint) == 0:
-            v_constraints = {
-                'len': task_graph.number_of_nodes(),
-                'constraints': [(0, network_graph.number_of_nodes() - 1) for _ in range(task_graph.number_of_nodes())],
-                'dtype': int
-            }
+        len_v =task_graph.number_of_nodes()
+        if bounds is None:
+            constraints = [(0, network_graph.number_of_nodes() - 1) for _ in range(task_graph.number_of_nodes())],
         else:
             constraints = [(0, network_graph.number_of_nodes() - 1) for _ in range(task_graph.number_of_nodes())]
-            for node, constr in v_constraint.items():
+            for node, constr in bounds.items():
                 constraints[node] = constr
-            
-            v_constraints = {
-                'len': task_graph.number_of_nodes(),
-                'constraints': constraints,
-                'dtype': int
-            }
 
-        super().__init__(f_objective, f_constraints, v_constraints)
+        super().__init__(f_objective, f_constraints, bounds=constraints, dtype=dtype, len=len_v)
         self.network_graph = network_graph
         self.task_graph = task_graph
 
-    def network_status_calculation(self):
+    def network_status_calculation(self, vector):
         # Подсчет трудоемкости
-        self.W = [0 for _ in range(self.problem.network_graph.graph.number_of_nodes())]
+        W = [0 for _ in range(self.network_graph.graph.number_of_nodes())]
         # Сколько каждый узел должен обработать задач
-        self.v_task_to_node = [0 for _ in range(self.problem.network_graph.graph.number_of_nodes())]
+        v_task_to_node = [0 for _ in range(self.network_graph.graph.number_of_nodes())]
         # Сколько каждый узел должен отправить
-        self.v_sent_to_node = [0 for _ in range(self.problem.network_graph.graph.number_of_nodes())]
+        v_sent_to_node = [0 for _ in range(self.network_graph.graph.number_of_nodes())]
         # Сколько каждый узел должен принять
-        self.v_reseive_to_node = [0 for _ in range(self.problem.network_graph.graph.number_of_nodes())]
+        v_reseive_to_node = [0 for _ in range(self.network_graph.graph.number_of_nodes())]
 
-        for start, end, weight in nx.to_edgelist(self.problem.task_graph.graph):
+        for start, end, weight in nx.to_edgelist(self.task_graph.graph):
             """
             start - задача начало
             end - задача конец
             weight - то сколько должено быть прередано из одной задачи в другую
             """
-            if not len(self.paths[str(start) + str(end)]) == 1:
-                temp = self.paths[str(start) + str(end)].copy()
+            if not len(paths[str(start) + str(end)]) == 1:
+                temp = paths[str(start) + str(end)].copy()
                 # task_weight - нагрузка на выполнение задачи
                 #Оброботка нагрузки начала пути
 
-                self.W[temp[0]] += self.problem.task_graph.operations[start].w + weight['weight']
+                W[temp[0]] += self.task_graph.operations[start].w + weight['weight']
 
-                self.v_sent_to_node[temp[0]] += weight['weight']
-                self.v_task_to_node[temp[0]] += self.problem.task_graph.operations[start].w
+                v_sent_to_node[temp[0]] += weight['weight']
+                v_task_to_node[temp[0]] += self.task_graph.operations[start].w
                 #Оброботка нагрузки конца пути
 
-                self.W[temp[-1]] += self.problem.task_graph.operations[end].w + weight['weight']
+                self.W[temp[-1]] += self.task_graph.operations[end].w + weight['weight']
 
                 self.v_reseive_to_node[temp[-1]] += weight['weight']
-                self.v_task_to_node[temp[-1]] += self.problem.task_graph.operations[start].w
+                self.v_task_to_node[temp[-1]] += self.task_graph.operations[start].w
 
                 temp.pop(0)
                 temp.pop(-1)
                 # Оброботка нагрузки всех остальных узлов в пути
                 for i in temp:
-                    self.W[i] += 2 * weight['weight']
-                    self.v_sent_to_node[i] += weight['weight']
-                    self.v_reseive_to_node[i] += weight['weight']
+                    W[i] += 2 * weight['weight']
+                    v_sent_to_node[i] += weight['weight']
+                    v_reseive_to_node[i] += weight['weight']
             else:
-                self.W[self.distribution[start]] += self.problem.task_graph.operations[start].w
-                self.v_task_to_node[self.distribution[start]] += self.problem.task_graph.operations[start].w
+                W[self.distribution[start]] += self.task_graph.operations[start].w
+                v_task_to_node[self.distribution[start]] += self.task_graph.operations[start].w
 
-                self.W[self.distribution[end]] += self.problem.task_graph.operations[end].w
-                self.v_task_to_node[self.distribution[end]] += self.problem.task_graph.operations[end].w
+                W[self.distribution[end]] += self.task_graph.operations[end].w
+                v_task_to_node[self.distribution[end]] += self.task_graph.operations[end].w

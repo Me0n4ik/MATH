@@ -33,7 +33,7 @@ class RandomSearchOptimizer(Optimizer):
         best_solution = None
         best_value = float('inf')
 
-        for _ in range(self.num_iterations):
+        for _ in tqdm(range(self.num_iterations), desc="Optimizing"):
             solution = self.problem.generate_random_solution()
             value = self.problem.evaluate(solution)
             if value < best_value:
@@ -62,7 +62,7 @@ class Particle:
 
 
 class ParticleSwarmOptimizer(Optimizer):
-    def __init__(self, problem, num_particles=30, iterations=100, inertia=0.5, cognitive=1.5, social=1.5):
+    def __init__(self, problem, num_particles=30, iterations=1_0000, inertia=0.5, cognitive=1.5, social=1.5):
         super().__init__(problem)
         self.num_particles = num_particles
         self.iterations = iterations
@@ -78,7 +78,7 @@ class ParticleSwarmOptimizer(Optimizer):
         global_best_position = None
         global_best_value = float('inf')
 
-        for _ in range(self.iterations):
+        for _ in tqdm(range(self.iterations), desc="Optimizing"):
             for particle in particles:
                 value = self.problem.evaluate(particle.position)
                 if value < particle.best_value:
@@ -95,7 +95,7 @@ class ParticleSwarmOptimizer(Optimizer):
                 particle.velocity = self.inertia * particle.velocity + cognitive_component + social_component
                 particle.position += particle.velocity
 
-                particle.position = np.clip(particle.position, bounds[:, 0], bounds[:, 1])
+                particle.position = self.problem.constrain_elements(particle.position)
 
         return global_best_position, global_best_value
 
