@@ -21,7 +21,7 @@ class OptimizationProblem:
         self.vector_length = len
 
     def generate_random_solution(self):
-        if np.random.random() < 0.5:
+        if np.random.random() < 0.7:
             net_nodes = self.network_graph.graph.number_of_nodes()
             tasks = self.task_graph.graph.number_of_nodes()
             num_to_select = np.random.randint(1, net_nodes + 1)
@@ -35,7 +35,7 @@ class OptimizationProblem:
                 return np.zeros(self.vector_length, dtype=self.dtype)
 
     def get_info(self, vector=None):
-        return {**{f.__name__:f(vector, self) for f in self.f_objective}, **{f.__name__:f(vector, self) for f in self.f_constraints}}
+        return {**{f.__name__:f(vector, self) for f in self.f_objective}, **{f.__name__:f(vector, self) for f in self.f_constraints}, 'Свертка': self.evaluate(vector)}
 
     def evaluate_objectives(self, vector=None):
         """Оценивает все целевые функции на заданном векторе. Возвращает список значений.""" 
@@ -92,6 +92,14 @@ class NetGraph:
         self.graph = nx.Graph(np.array(martx))
         self.nodes = [NetNode(np.random.randint(net_power[0], net_power[1]), np.random.randint(e0[0], e0[1]), np.random.randint(emax[0], emax[1])) \
                       for _ in range(self.graph.number_of_nodes())]
+        self.nodes[0] = NetNode(200, 100, 200)
+        
+    def __str__(self) -> str:
+        return '\n'.join([f'{node}' for node in self.nodes])
+    
+    def print(self):
+        pos = nx.spring_layout(self.graph, seed=100)
+        nx.draw(self.graph, pos, with_labels=True, font_color='white')
 
 
 @dataclass
@@ -102,6 +110,20 @@ class TaskGraph:
     def __init__(self, martx, w = (100,600)) -> None:
         self.graph = nx.DiGraph(np.array(martx))
         self.operations = [TaskNode(np.random.randint(w[0], w[1])) for _ in range(self.graph.number_of_nodes())]
+
+    def __str__(self) -> str:
+        return '\n'.join([f'{o}' for o in self.operations])
+    
+    def print(self):
+        options = {
+            'width': 1,
+            'arrowstyle': '-|>',
+            'arrowsize': 18,
+        }
+
+        pos = nx.planar_layout(self.graph, center = [10, 10], scale = 20)
+        nx.draw(self.graph, pos, with_labels=True, font_color='white', **options)
+        nx.draw_networkx_edge_labels(self.graph, pos, {(x, y): z['weight'] for (x, y, z) in nx.to_edgelist(self.graph)},font_color='red')
 
 class NetworkOptimizationProblem(OptimizationProblem):
     def __init__(self, network_graph, task_graph, f_objective, f_constraints=None, bounds=None, dtype = int, t_lim = 20):

@@ -22,12 +22,11 @@ class Optimizer:
 
     def save(self):
         transformed_data = [{**d, **self.problem.get_info(d['vector'])} for d in self.history]
-        pprint(transformed_data)
         # Создание DataFrame из списка словарей
         df = pd.DataFrame(transformed_data)
 
         # Экспорт DataFrame в Excel файл
-        df.to_excel('output.xlsx', index=False)
+        df.to_excel(f'{self.algo_name}.xlsx', index=False)
 
 
 class RandomSearchOptimizer(Optimizer):
@@ -46,6 +45,7 @@ class RandomSearchOptimizer(Optimizer):
             if value < best_value:
                 best_solution = solution
                 best_value = value
+            self.update_history(_, best_solution)
         return best_solution, best_value
 
 
@@ -120,5 +120,5 @@ class GreedyOptimizer(Optimizer):
                 if score < global_best_value:
                     global_best_position = new_solution
                     global_best_value = score
-
+                self.update_history(task_id+node_id, global_best_value)
         return global_best_position, global_best_value
