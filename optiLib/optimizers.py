@@ -43,9 +43,9 @@ class RandomSearchOptimizer(Optimizer):
         return best_solution, best_value
 
 class Particle:
-    def __init__(self, dimensions, bounds):
-        self.position = np.random.uniform(bounds[:, 0], bounds[:, 1], dimensions)
-        self.velocity = np.random.uniform(-1, 1, dimensions)
+    def __init__(self, problem):
+        self.position = problem.generate_random_solution()
+        self.velocity = np.random.uniform(-1, 1, problem.vector_length)
         self.best_position = np.copy(self.position)
         self.best_value = float('inf')
 
@@ -60,7 +60,6 @@ class Particle:
                          phi_g * rg * (global_best_position.position - self.position)) 
 
 
-
 class ParticleSwarmOptimizer(Optimizer):
     def __init__(self, problem, num_particles=30, iterations=1_0000, inertia=0.5, cognitive=1.5, social=1.5):
         super().__init__(problem)
@@ -73,9 +72,9 @@ class ParticleSwarmOptimizer(Optimizer):
     def optimize(self):
         dimensions = self.problem.vector_length
         bounds = np.array(self.problem.bounds)
-        particles = [Particle(dimensions, bounds) for _ in range(self.num_particles)]
+        particles = [Particle(self.problem) for _ in range(self.num_particles)]
         
-        global_best_position = None
+        global_best_position = Particle(self.problem).position
         global_best_value = float('inf')
 
         for _ in tqdm(range(self.iterations), desc="Optimizing"):
@@ -93,8 +92,7 @@ class ParticleSwarmOptimizer(Optimizer):
                 cognitive_component = self.cognitive * np.random.rand(dimensions) * (particle.best_position - particle.position)
                 social_component = self.social * np.random.rand(dimensions) * (global_best_position - particle.position)
                 particle.velocity = self.inertia * particle.velocity + cognitive_component + social_component
-                particle.position += particle.velocity
-
+                particle.position += particle.velocity.astype(self.problem.dtype)
                 particle.position = self.problem.constrain_elements(particle.position)
 
         return global_best_position, global_best_value

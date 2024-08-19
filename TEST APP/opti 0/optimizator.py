@@ -28,7 +28,7 @@ class Optimizer:
             self.history.append({'iteration': iteration, 'vector': copy.copy(vector)})
 
 class Particl:
-    def __init__(self, values=None):
+    def __init__(self):
         super().__init__(values)
         self.velocity = np.random.uniform(-1, 1, self.length_constraint)
         self.best_position = copy.copy(self)
