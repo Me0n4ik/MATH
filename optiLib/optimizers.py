@@ -4,21 +4,36 @@ import numpy as np
 from tqdm import tqdm
 import random
 import pandas as pd
+import os
 
 
 class Optimizer:
-    def __init__(self, problem, track_history=True):
+    def __init__(self, problem, track_history=True, update_history_coef = 10):
         self.problem = problem
         self.algo_name = None
         self.track_history = track_history
         self.history = [] if track_history else None
+        self.update_history_coef = update_history_coef
+        self.update_history_counter = 0
+        self.first_solution = False
 
     def optimize(self):
         raise NotImplementedError("Метод optimize() должен быть реализован в дочернем классе.")
 
     def update_history(self, iteration, vector):
         if self.track_history:
-            self.history.append({'iteration': iteration,'Алгоритм':self.algo_name, 'vector': vector.copy()})
+            if not self.first_solution:
+                if len(self.history) > 0:
+                    if self.problem.evaluate(vector) > 0:
+                        self.first_solution = True
+                        self.history.append({'iteration': iteration,'Алгоритм':self.algo_name, 'vector': vector.copy()})
+            else:
+                if self.update_history_counter == 0:
+                    self.history.append({'iteration': iteration,'Алгоритм':self.algo_name, 'vector': vector.copy()})
+                else:
+                    self.update_history_counter += 1
+                    if self.update_history_counter == self.update_history_coef:
+                        self.update_history_coef = 0 
 
     def save(self):
         transformed_data = [{**d, **self.problem.get_info(d['vector'])} for d in self.history]
@@ -26,12 +41,38 @@ class Optimizer:
         df = pd.DataFrame(transformed_data)
 
         # Экспорт DataFrame в Excel файл
-        df.to_excel(f'./data/{self.algo_name}.xlsx', index=False)
+        df.to_excel(f'./data/{self.problem.name}{self.algo_name}.xlsx', index=False)
 
+    def save(self, experiment_number):
+        transformed_data = [{**d, 'Эксперимент': experiment_number, **self.problem.get_info(d['vector'])} for d in self.history]
+        
+        # Создание DataFrame из списка словарей
+        new_df = pd.DataFrame(transformed_data)
+
+        filename = f'./data/{self.problem.name}{self.algo_name}.xlsx'
+
+        if os.path.exists(filename):
+            # Если файл существует, читаем его и добавляем новые данные
+            existing_df = pd.read_excel(filename)
+            combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+        else:
+            combined_df = new_df
+
+        # Сортируем DataFrame по номеру эксперимента и итерации
+        combined_df = combined_df.sort_values(['Эксперимент', 'iteration'])
+
+        # Экспорт DataFrame в Excel файл
+        combined_df.to_excel(filename, index=False)
+
+        print(f"Данные сохранены в файл: {filename}")
+
+    def relod_data(self):
+        self.history = []
+        self.update_history_counter = 0
 
 class RandomSearchOptimizer(Optimizer):
-    def __init__(self, problem, iterations=100):
-        super().__init__(problem)
+    def __init__(self, problem, iterations=100, track_history=True, update_history_coef = 10):
+        super().__init__(problem, track_history, update_history_coef)
         self.iterations = iterations
         self.algo_name = "RS"
 
@@ -76,8 +117,8 @@ class Particle:
 
 
 class ParticleSwarmOptimizer(Optimizer):
-    def __init__(self, problem, num_particles=30, iterations=10000, inertia=0.7, cognitive=0.7, social=0.7):
-        super().__init__(problem)
+    def __init__(self, problem, num_particles=30, iterations=10000, inertia=0.7, cognitive=0.7, social=0.7, track_history=True, update_history_coef = 10):
+        super().__init__(problem, track_history, update_history_coef)
         self.algo_name = "PSO"
         self.num_particles = num_particles
         self.iterations = iterations
@@ -101,24 +142,103 @@ class ParticleSwarmOptimizer(Optimizer):
                 particle.update_velocity(global_best_position, self.inertia, self.cognitive, self.social)
                 particle.update_position()
             self.update_history(_, global_best_position)
+
+            print(particle.position)
         return global_best_position, global_best_value
-    
-class GreedyOptimizer(Optimizer):
-    def __init__(self, problem):
-        super().__init__(problem)
-        self.algo_name = "Жадный"
+
+
+class GeneticAlgorithm(Optimizer):
+    def __init__(self, problem, population_size=100, generations=1000, crossover_rate=0.8, mutation_rate=0.1, track_history=True, update_history_coef = 10):
+        super().__init__(problem, track_history, update_history_coef)
+        self.algo_name = "GA"
+        self.population_size = population_size
+        self.generations = generations
+        self.crossover_rate = crossover_rate
+        self.mutation_rate = mutation_rate
 
     def optimize(self):
-        global_best_position = np.zeros_like(self.problem.generate_random_solution())
-        global_best_value = self.problem.evaluate(global_best_position)
+        population = [self.problem.generate_random_solution() for _ in range(self.population_size)]
+        best_solution = min(population, key=self.problem.evaluate)
+        best_value = self.problem.evaluate(best_solution)
 
-        for task_id in tqdm(range(len(global_best_position)), desc="Optimizing"):
-            for node_id in range(self.problem.network_graph.graph.number_of_nodes()):
-                new_solution = copy(global_best_position)
-                new_solution[task_id] = node_id
-                score = self.problem.evaluate(new_solution)
-                if score < global_best_value:
-                    global_best_position = new_solution
-                    global_best_value = score
-                self.update_history(task_id*node_id+node_id, global_best_position)
-        return global_best_position, global_best_value
+        for generation in tqdm(range(self.generations), desc="Оптимизация"):
+            new_population = []
+            
+            for _ in range(self.population_size // 2):
+                if random.random() < self.crossover_rate:
+                    parent1, parent2 = random.choices(population, k=2)
+                    child1, child2 = self.crossover(parent1, parent2)
+                else:
+                    child1, child2 = random.choices(population, k=2)
+                
+                if random.random() < self.mutation_rate:
+                    child1 = self.mutate(child1)
+                if random.random() < self.mutation_rate:
+                    child2 = self.mutate(child2)
+                
+                new_population.extend([child1, child2])
+            
+            population = new_population
+            
+            current_best = min(population, key=self.problem.evaluate)
+            current_best_value = self.problem.evaluate(current_best)
+            
+            if current_best_value < best_value:
+                best_solution = current_best
+                best_value = current_best_value
+            
+            self.update_history(generation, best_solution)
+        
+        return best_solution, best_value
+
+    def crossover(self, parent1, parent2):
+        crossover_point = random.randint(1, len(parent1) - 1)
+        child1 = np.concatenate((parent1[:crossover_point], parent2[crossover_point:]))
+        child2 = np.concatenate((parent2[:crossover_point], parent1[crossover_point:]))
+        return child1, child2
+
+    def mutate(self, individual):
+        mutation_point = random.randint(0, len(individual) - 1)
+        individual[mutation_point] = self.problem.generate_random_solution()[mutation_point]
+        return individual
+
+class DirectedRandomSearchOptimizer(Optimizer):
+    def __init__(self, problem, iterations=1000, step_size=0.1, num_directions=10, track_history=True, update_history_coef=10):
+        super().__init__(problem, track_history, update_history_coef)
+        self.algo_name = "DRS"
+        self.iterations = iterations
+        self.step_size = step_size
+        self.num_directions = num_directions
+
+    def optimize(self):
+        best_solution = self.problem.generate_random_solution()
+        best_value = self.problem.evaluate(best_solution)
+
+        for iteration in tqdm(range(self.iterations), desc="Optimizing"):
+            # Генерируем случайные направления
+            directions = np.random.uniform(-1, 1, (self.num_directions, self.problem.vector_length))
+            
+            # Нормализуем направления
+            directions /= np.linalg.norm(directions, axis=1)[:, np.newaxis]
+
+            improved = False
+            for direction in directions:
+                # Пробуем сделать шаг в текущем направлении
+                new_solution = best_solution + self.step_size * direction
+                new_solution = self.problem.constrain_elements(new_solution)
+                new_value = self.problem.evaluate(new_solution)
+
+                if new_value < best_value:
+                    best_solution = new_solution
+                    best_value = new_value
+                    improved = True
+                    break  # Выходим из цикла, так как нашли улучшение
+
+            # Если не было улучшения, уменьшаем размер шага
+            if not improved:
+                self.step_size *= 0.95  # Можно настроить коэффициент уменьшения
+
+            self.update_history(iteration, best_solution)
+
+        return best_solution, best_value
+
