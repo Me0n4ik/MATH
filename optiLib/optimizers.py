@@ -8,7 +8,7 @@ import os
 
 
 class Optimizer:
-    def __init__(self, problem, track_history=True, update_history_coef = 10):
+    def __init__(self, problem, track_history=True, update_history_coef = 1000):
         self.problem = problem
         self.algo_name = None
         self.track_history = track_history
@@ -21,19 +21,16 @@ class Optimizer:
         raise NotImplementedError("Метод optimize() должен быть реализован в дочернем классе.")
 
     def update_history(self, iteration, vector):
+        self.update_history_counter += 1
         if self.track_history:
             if not self.first_solution:
-                if len(self.history) > 0:
-                    if self.problem.evaluate(vector) > 0:
-                        self.first_solution = True
-                        self.history.append({'iteration': iteration,'Алгоритм':self.algo_name, 'vector': vector.copy()})
+                if self.problem.evaluate(vector) != np.inf:
+                    self.first_solution = True
+                    self.history.append({'iteration': iteration, 'Решение': self.update_history_counter, 'Алгоритм': self.algo_name, 'vector': vector.copy()})
             else:
-                if self.update_history_counter == 0:
-                    self.history.append({'iteration': iteration,'Алгоритм':self.algo_name, 'vector': vector.copy()})
-                else:
-                    self.update_history_counter += 1
-                    if self.update_history_counter == self.update_history_coef:
-                        self.update_history_coef = 0 
+                if self.update_history_counter % self.update_history_coef == 0:
+                    self.history.append({'iteration': iteration, 'Алгоритм': self.algo_name,'Решение': self.update_history_counter, 'vector': vector.copy()})
+
 
     def save(self):
         transformed_data = [{**d, **self.problem.get_info(d['vector'])} for d in self.history]
@@ -87,6 +84,9 @@ class RandomSearchOptimizer(Optimizer):
                 best_solution = solution
                 best_value = value
             self.update_history(_, best_solution)
+            if self.first_solution: 
+                return best_solution, best_value
+            
         return best_solution, best_value
 
 
@@ -117,7 +117,7 @@ class Particle:
 
 
 class ParticleSwarmOptimizer(Optimizer):
-    def __init__(self, problem, num_particles=30, iterations=10000, inertia=0.7, cognitive=0.7, social=0.7, track_history=True, update_history_coef = 10):
+    def __init__(self, problem, num_particles=30, iterations=10000, inertia=0.7, cognitive=0.7, social=0.7, track_history=True, update_history_coef = 100):
         super().__init__(problem, track_history, update_history_coef)
         self.algo_name = "PSO"
         self.num_particles = num_particles
@@ -137,13 +137,14 @@ class ParticleSwarmOptimizer(Optimizer):
                 if value < global_best_value:
                     global_best_value = value
                     global_best_position = particle.best_position.copy()
+                self.update_history(_, global_best_position)
+                if self.first_solution: 
+                    return global_best_position, global_best_value
 
             for particle in particles:
                 particle.update_velocity(global_best_position, self.inertia, self.cognitive, self.social)
                 particle.update_position()
-            self.update_history(_, global_best_position)
-
-            print(particle.position)
+            
         return global_best_position, global_best_value
 
 
@@ -179,16 +180,16 @@ class GeneticAlgorithm(Optimizer):
                 new_population.extend([child1, child2])
             
             population = new_population
+
+            for solution in population:
+                current_value = self.problem.evaluate(solution)
+                if current_value < best_value:
+                    best_solution = solution
+                    best_value = current_value
+                    self.update_history(generation, best_solution)
+                    if self.first_solution: 
+                        return best_solution, best_value
             
-            current_best = min(population, key=self.problem.evaluate)
-            current_best_value = self.problem.evaluate(current_best)
-            
-            if current_best_value < best_value:
-                best_solution = current_best
-                best_value = current_best_value
-            
-            self.update_history(generation, best_solution)
-        
         return best_solution, best_value
 
     def crossover(self, parent1, parent2):
@@ -239,6 +240,8 @@ class DirectedRandomSearchOptimizer(Optimizer):
                 self.step_size *= 0.95  # Можно настроить коэффициент уменьшения
 
             self.update_history(iteration, best_solution)
+            if self.first_solution: 
+                return best_solution, best_value
 
         return best_solution, best_value
 
