@@ -137,7 +137,7 @@ class ParticleSwarmOptimizer(Optimizer):
                 if value < global_best_value:
                     global_best_value = value
                     global_best_position = particle.best_position.copy()
-                self.update_history(_, global_best_position)
+                self.update_history(_, particle.position)
                 if self.first_solution: 
                     return global_best_position, global_best_value
 
@@ -149,7 +149,7 @@ class ParticleSwarmOptimizer(Optimizer):
 
 
 class GeneticAlgorithm(Optimizer):
-    def __init__(self, problem, population_size=100, generations=1000, crossover_rate=0.8, mutation_rate=0.1, track_history=True, update_history_coef = 10):
+    def __init__(self, problem, population_size=100, generations=1000, crossover_rate=0.8, mutation_rate=0.1, track_history=True, update_history_coef = 100):
         super().__init__(problem, track_history, update_history_coef)
         self.algo_name = "GA"
         self.population_size = population_size
@@ -159,8 +159,19 @@ class GeneticAlgorithm(Optimizer):
 
     def optimize(self):
         population = [self.problem.generate_random_solution() for _ in range(self.population_size)]
-        best_solution = min(population, key=self.problem.evaluate)
-        best_value = self.problem.evaluate(best_solution)
+        
+        best_solution = None
+        best_value = np.inf
+
+        for solution in population:
+            current_value = self.problem.evaluate(solution)
+            if current_value < best_value:
+                best_solution = solution
+                best_value = current_value
+            self.update_history(0, solution)
+
+            if self.first_solution: 
+                return best_solution, best_value
 
         for generation in tqdm(range(self.generations), desc="Оптимизация"):
             new_population = []
@@ -186,9 +197,10 @@ class GeneticAlgorithm(Optimizer):
                 if current_value < best_value:
                     best_solution = solution
                     best_value = current_value
-                    self.update_history(generation, best_solution)
-                    if self.first_solution: 
-                        return best_solution, best_value
+
+                self.update_history(generation, current_value)
+                if self.first_solution: 
+                    return best_solution, best_value
             
         return best_solution, best_value
 
