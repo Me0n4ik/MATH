@@ -8,7 +8,7 @@ import os
 
 
 class Optimizer:
-    def __init__(self, problem, track_history=True, update_history_coef = 1000):
+    def __init__(self, problem, track_history=True, update_history_coef = 1000, b_first_solution = False):
         self.problem = problem
         self.algo_name = None
         self.track_history = track_history
@@ -16,6 +16,7 @@ class Optimizer:
         self.update_history_coef = update_history_coef
         self.update_history_counter = 0
         self.first_solution = False
+        self.b_first_solution = b_first_solution
 
     def optimize(self):
         raise NotImplementedError("Метод optimize() должен быть реализован в дочернем классе.")
@@ -23,25 +24,29 @@ class Optimizer:
     def update_history(self, iteration, vector):
         self.update_history_counter += 1
         if self.track_history:
-            if not self.first_solution:
-                if self.problem.evaluate(vector) != np.inf:
-                    self.first_solution = True
-                    self.history.append({'iteration': iteration, 'Решение': self.update_history_counter, 'Алгоритм': self.algo_name, 'vector': vector.copy()})
+            if self.b_first_solution:
+                if not self.first_solution:
+                    if self.problem.evaluate(vector) != np.inf:
+                        self.first_solution = True
+                        self.history.append({'iteration': iteration, 'Решение': self.update_history_counter, 'Алгоритм': self.algo_name, 'vector': vector.copy()})
+                else:
+                    if self.update_history_counter % self.update_history_coef == 0:
+                        self.history.append({'iteration': iteration, 'Алгоритм': self.algo_name,'Решение': self.update_history_counter, 'vector': vector.copy()})
             else:
                 if self.update_history_counter % self.update_history_coef == 0:
-                    self.history.append({'iteration': iteration, 'Алгоритм': self.algo_name,'Решение': self.update_history_counter, 'vector': vector.copy()})
+                        self.history.append({'iteration': iteration, 'Алгоритм': self.algo_name,'Решение': self.update_history_counter, 'vector': vector.copy()})
 
 
-    def save(self):
-        transformed_data = [{**d, **self.problem.get_info(d['vector'])} for d in self.history]
-        # Создание DataFrame из списка словарей
-        df = pd.DataFrame(transformed_data)
-
-        # Экспорт DataFrame в Excel файл
-        df.to_excel(f'./data/{self.problem.name}{self.algo_name}.xlsx', index=False)
+#    def save(self):
+#        transformed_data = [{**d, **self.problem.get_info(d['vector'])} for d in self.history]
+#        # Создание DataFrame из списка словарей
+#        df = pd.DataFrame(transformed_data)
+#
+#        # Экспорт DataFrame в Excel файл
+#        df.to_excel(f'./data/{self.problem.name}{self.algo_name}.xlsx', index=False)
 
     def save(self, experiment_number):
-        transformed_data = [{**d, 'Эксперимент': experiment_number, **self.problem.get_info(d['vector'])} for d in self.history]
+        transformed_data = [{**d, 'Эксперимент': experiment_number, **self.problem.get_info_save(d['vector'])} for d in self.history]
         
         # Создание DataFrame из списка словарей
         new_df = pd.DataFrame(transformed_data)
@@ -117,8 +122,8 @@ class Particle:
 
 
 class ParticleSwarmOptimizer(Optimizer):
-    def __init__(self, problem, num_particles=30, iterations=10000, inertia=0.7, cognitive=0.7, social=0.7, track_history=True, update_history_coef = 100):
-        super().__init__(problem, track_history, update_history_coef)
+    def __init__(self, problem, num_particles=30, iterations=10000, inertia=0.7, cognitive=0.7, social=0.7, track_history=True, update_history_coef = 100, b_first_solution = False):
+        super().__init__(problem, track_history, update_history_coef, b_first_solution)
         self.algo_name = "PSO"
         self.num_particles = num_particles
         self.iterations = iterations
@@ -137,8 +142,9 @@ class ParticleSwarmOptimizer(Optimizer):
                 if value < global_best_value:
                     global_best_value = value
                     global_best_position = particle.best_position.copy()
-                self.update_history(_, particle.position)
-                if self.first_solution: 
+                self.update_history(_, global_best_position)
+                
+                if self.first_solution and self.b_first_solution: 
                     return global_best_position, global_best_value
 
             for particle in particles:
@@ -170,7 +176,7 @@ class GeneticAlgorithm(Optimizer):
                 best_value = current_value
             self.update_history(0, solution)
 
-            if self.first_solution: 
+            if self.first_solution and self.b_first_solution: 
                 return best_solution, best_value
 
         for generation in tqdm(range(self.generations), desc="Оптимизация"):
@@ -199,7 +205,7 @@ class GeneticAlgorithm(Optimizer):
                     best_value = current_value
 
                 self.update_history(generation, current_value)
-                if self.first_solution: 
+                if self.first_solution and self.b_first_solution: 
                     return best_solution, best_value
             
         return best_solution, best_value
@@ -252,7 +258,7 @@ class DirectedRandomSearchOptimizer(Optimizer):
                 self.step_size *= 0.95  # Можно настроить коэффициент уменьшения
 
             self.update_history(iteration, best_solution)
-            if self.first_solution: 
+            if self.first_solution and self.b_first_solution: 
                 return best_solution, best_value
 
         return best_solution, best_value

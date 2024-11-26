@@ -33,7 +33,7 @@ class OptimizationProblem:
     f_objective : list
         Список основных целевых функций
     
-    f_constraints : list
+    constraints : list
         Список функций-ограничений
     
     vector_length : int
@@ -106,7 +106,7 @@ class OptimizationProblem:
     4. Все функции минимизируются
     """
 
-    def __init__(self, f_objective, f_constraints=None, bounds=None, dtype = int, len = 10, name = "Problem 1", node_functions=None, 
+    def __init__(self, f_objective, constraints=None, bounds=None, dtype = int, len = 10, name = "Problem 1", node_functions=None, 
                  function_constraints=None, special_function_constraints=None):
         """
         Инициализация задачи оптимизации 
@@ -116,7 +116,7 @@ class OptimizationProblem:
         f_objective : list
             Список основных целевых функций для оптимизации
         
-        f_constraints : list, optional
+        constraints : list, optional
             Список функций-ограничений, которым должно удовлетворять решение
             
         bounds : array-like, optional 
@@ -151,7 +151,7 @@ class OptimizationProblem:
         """
         self.name = name
         self.f_objective = f_objective
-        self.f_constraints = f_constraints if f_constraints is not None else []
+        self.constraints = constraints if constraints is not None else []
         self.vector_length = None
         self.bounds = np.array(bounds) if bounds is not None else None
         self.dtype = dtype
@@ -159,7 +159,6 @@ class OptimizationProblem:
         self.node_functions = node_functions if node_functions is not None else {}
         self.function_constraints = function_constraints if function_constraints is not None else {}
         self.special_function_constraints = special_function_constraints if special_function_constraints is not None else {}
-
 
     def generate_random_solution(self):
         """
@@ -187,42 +186,7 @@ class OptimizationProblem:
             else:
                 return self.constrain_elements(np.zeros(self.vector_length, dtype=self.dtype))
 
-    def check_function_constraints(self, vector):
-        """
-        Проверяет выполнение ограничений на значения функций.
-        
-        Параметры:
-        ----------
-        vector : array-like
-            Вектор решения для проверки
-            
-        Возвращает:
-        -----------
-        bool
-            True если все ограничения на функции выполнены, False иначе
-            
-        Примечания:
-        -----------
-        Проверяет ограничения как для основных, так и для специальных функций
-        """
-        # Проверка ограничений основных функций
-        for func, bounds in self.function_constraints.items():
-            value = func(vector, self)
-            if not (bounds[0] <= value <= bounds[1]):
-                return False
-                
-        # Проверка ограничений специальных функций
-        for nodes, constraints in self.special_function_constraints.items():
-            if any(node in vector for node in nodes):
-                for func, bounds in constraints.items():
-                    value = func(vector, self)
-                    if not (bounds[0] <= value <= bounds[1]):
-                        return False
-                        
-        return True
-
-
-    def get_info(self, vector=None):
+    def get_info_save(self, vector=None):
         """
         Возвращает расширенную информацию о решении.
         
@@ -238,7 +202,7 @@ class OptimizationProblem:
         """
         info = {
             **{f.__name__: f(vector, self) for name, f in self.f_objective.items()},
-            **{f.__name__: f(vector, self) for f in self.f_constraints},
+            **{f.__name__: f(vector, self) for f in self.constraints},
             'Свертка': self.evaluate(vector)
         }
         # Добавляем информацию об ограничениях функций
@@ -275,8 +239,77 @@ class OptimizationProblem:
                             'узел': nodes  # Добавляем информацию об узле
                         }
 
-
         return info
+    
+    def get_info(self, vector=None):
+        """
+        Возвращает расширенную информацию о решении в форматированном виде.
+        
+        Параметры:
+        ----------
+        vector : array-like, optional
+            Вектор решения для анализа
+            
+        Возвращает:
+        -----------
+        str
+            Форматированный текст с информацией о решении
+        """
+        if vector is None:
+            return "Вектор решения не предоставлен"
+
+        info_str = "\n=== ИНФОРМАЦИЯ О РЕШЕНИИ ===\n\n"
+
+        # Основные целевые функции
+        info_str += "📊 ЦЕЛЕВЫЕ ФУНКЦИИ:\n"
+        info_str += "-" * 40 + "\n"
+        for name, f in self.f_objective.items():
+            value = f(vector, self)
+            info_str += f"▪ {f.__name__:<30} = {value if value is not None else 0:.4f}\n"
+        info_str += "\n"
+
+        # Ограничения
+        info_str += "🔒 ОГРАНИЧЕНИЯ:\n"
+        info_str += "-" * 40 + "\n"
+        for f in self.constraints:
+            value = f(vector, self)
+            info_str += f"▪ {f.__name__:<30} = {value:.4f}\n"
+        info_str += "\n"
+
+        # Значение свертки
+        info_str += "📈 ЗНАЧЕНИЕ СВЕРТКИ:\n"
+        info_str += "-" * 40 + "\n"
+        info_str += f"▪ Общая свертка = {self.evaluate(vector):.4f}\n\n"
+
+        # Ограничения функций
+        info_str += "🎯 ОГРАНИЧЕНИЯ ФУНКЦИЙ:\n"
+        info_str += "-" * 40 + "\n"
+        for f, bounds in self.function_constraints.items():
+            value = f(vector, self)
+            info_str += f"▪ {f.__name__}:\n"
+            info_str += f"  ├─ Значение: {value:.4f}\n"
+            info_str += f"  └─ Границы: [{bounds[0]}, {bounds[1]}]\n"
+        info_str += "\n"
+
+        # Специальные ограничения
+        info_str += "⭐ СПЕЦИАЛЬНЫЕ ОГРАНИЧЕНИЯ:\n"
+        info_str += "-" * 40 + "\n"
+        for nodes, constraints in self.special_function_constraints.items():
+            has_node = any(node in vector for node in nodes)
+            
+            if has_node:
+                info_str += f"▪ Узлы {nodes}:\n"
+                for f, bounds in constraints.items():
+                    for node in nodes:
+                        value = f(vector, self, node)
+                        info_str += f"  ├─ {f.__name__} (узел {node}):\n"
+                        info_str += f"  │  ├─ Значение: {value if value is not None else 0:.4f}\n"
+                        info_str += f"  │  └─ Границы: [{bounds[0]}, {bounds[1]}]\n"
+                info_str += "  └─\n"
+
+        info_str += "\n=== КОНЕЦ ОТЧЕТА ===\n"
+
+        return info_str
 
     def evaluate_objectives(self, vector=None):
         """
@@ -308,9 +341,10 @@ class OptimizationProblem:
         if vector is not None:
             for nodes, func in self.node_functions.items():
                 # Проверяем наличие узлов из массива в текущем векторе
-                if any(node in vector for node in nodes):
-                    node_specific_objectives.append(func(vector, self))
-        
+                for node in nodes:
+                    if node in vector:
+                        node_specific_objectives.append(func(vector, self))
+
         # Возвращаем все значения целевых функций
         return base_objectives + node_specific_objectives
     
@@ -335,11 +369,27 @@ class OptimizationProblem:
         - Значений специальных функций для узлов
         """
         all_objectives = self.evaluate_objectives(vector)
-        return np.prod(all_objectives)
+        return np.prod(np.array([x for x in all_objectives if x is not None]))
+
+    def check_constraints(self, vector=None):
+        """
+        Проверяет выполнение всех ограничений на ветор для заданного вектора.
+        
+        Параметры:
+        ----------
+        vector : array-like, optional
+            Вектор решения для проверки
+            
+        Возвращает:
+        -----------
+        bool
+            True если все ограничения выполнены, False иначе
+        """
+        return all(c(vector, self) for c in self.constraints)
 
     def expanded_constraints(self, vector=None):
         """
-        Проверяет выполнение всех функций-ограничений для заданного вектора.
+        Проверяет выполнение всех функций-ограничений на задачу для заданного вектора.
         
         Параметры:
         ----------
@@ -356,49 +406,43 @@ class OptimizationProblem:
         True означает, что ограничение выполняется
         False означает нарушение ограничения
         """
-        return [c(vector, self) for c in self.f_constraints]
+        return [c(vector, self) for c in self.constraints]
 
-    def check_constraints(self, vector=None):
+    def check_function_constraints(self, vector):
         """
-        Проверяет выполнение всех ограничений на ветор для заданного вектора.
+        Проверяет выполнение ограничений на значения функций.
         
         Параметры:
         ----------
-        vector : array-like, optional
+        vector : array-like
             Вектор решения для проверки
             
         Возвращает:
         -----------
         bool
-            True если все ограничения выполнены, False иначе
-        """
-        return all(c(vector, self) for c in self.f_constraints)
-
-    def evaluate(self, solution):
-        """
-        Вычисляет итоговое значение целевой функции для решения.
-        
-        Параметры:
-        ----------
-        solution : array-like
-            Вектор решения для оценки
-            
-        Возвращает:
-        -----------
-        float
-            Значение свертки целевых функций если решение допустимо,
-            бесконечность если решение недопустимо
+            True если все ограничения на функции выполнены, False иначе
             
         Примечания:
         -----------
-        1. Сначала решение приводится к допустимому виду
-        2. Проверяется выполнение всех ограничений
-        3. Вычисляется свертка целевых функций
+        Проверяет ограничения как для основных, так и для специальных функций
         """
-        solution = self.constrain_elements(solution)
-        if self.is_feasible(solution):
-            return self.convolution_evaluate_objectives(solution)
-        return np.inf
+        # Проверка ограничений основных функций
+        for func, bounds in self.function_constraints.items():
+            value = func(vector, self)
+            if not (bounds[0] <= value <= bounds[1]):
+                return False
+                
+        # Проверка ограничений специальных функций
+        for nodes, constraints in self.special_function_constraints.items():
+                for node in nodes: 
+                    if node in vector:
+                        for func, bounds in constraints.items():
+                            value = func(vector, self, node)
+                            if value is not None:
+                                if not (bounds[0] <= value <= bounds[1]):
+                                    return False
+                        
+        return True
     
     def constrain_elements(self, vector):
         """
@@ -450,10 +494,35 @@ class OptimizationProblem:
             return False
         return self.check_constraints(solution) and self.check_function_constraints(solution)
 
+    def evaluate(self, solution):
+        """
+        Вычисляет итоговое значение целевой функции для решения.
+        
+        Параметры:
+        ----------
+        solution : array-like
+            Вектор решения для оценки
+            
+        Возвращает:
+        -----------
+        float
+            Значение свертки целевых функций если решение допустимо,
+            бесконечность если решение недопустимо
+            
+        Примечания:
+        -----------
+        1. Сначала решение приводится к допустимому виду
+        2. Проверяется выполнение всех ограничений
+        3. Вычисляется свертка целевых функций
+        """
+        solution = self.constrain_elements(solution)
+        if self.is_feasible(solution):
+            return self.convolution_evaluate_objectives(solution)
+        return np.inf
 
 class IntegerOptimizationProblem(OptimizationProblem):
-    def __init__(self, f_objective, f_constraints=None, bounds=None, len = 10):
-        super().__init__(f_objective, f_constraints=None, bounds=None, dtype = int, len = 10)
+    def __init__(self, f_objective, constraints=None, bounds=None, len = 10):
+        super().__init__(f_objective, constraints=None, bounds=None, dtype = int, len = 10)
 
     def evaluate(self, solution):
         return super().evaluate(solution)
@@ -482,7 +551,6 @@ class NetGraph:
     def print(self):
         pos = nx.spring_layout(self.graph, seed=100)
         nx.draw(self.graph, pos, with_labels=True, font_color='white')
-
 
 @dataclass
 class TaskNode:
@@ -952,6 +1020,7 @@ class TaskScheduler:
         for node, time in timing_dict.items():
             print(f"Узел {node}: {time:.2f}")
 
+
 class NetworkOptimizationProblem(OptimizationProblem):
     """
     Класс для решения задачи оптимизации распределения задач в сети.
@@ -967,7 +1036,7 @@ class NetworkOptimizationProblem(OptimizationProblem):
                  network_graph: NetGraph,
                  task_graph: TaskGraph,
                  f_objective: list,
-                 f_constraints: list = None,
+                 constraints: list = None,
                  bounds: dict = None,
                  dtype: type = int,
                  t_lim: float = 5,
@@ -983,7 +1052,7 @@ class NetworkOptimizationProblem(OptimizationProblem):
             network_graph: Граф сети
             task_graph: Граф задач
             f_objective: Целевые функции оптимизации
-            f_constraints: Функции-ограничения для распределения
+            constraints: Функции-ограничения для распределения
             bounds: Ограничения на распределение задач по узлам
             dtype: Тип данных для значений
             t_lim: Временное ограничение
@@ -1004,13 +1073,13 @@ class NetworkOptimizationProblem(OptimizationProblem):
         vector_length = task_graph.graph.number_of_nodes()
         
         # Формирование ограничений на распределение
-        constraints = self._create_constraints(bounds, vector_length)
+        bounds = self._create_constraints(bounds, vector_length)
         
         # Инициализация родительского класса
         super().__init__(
             f_objective=f_objective,
-            f_constraints=f_constraints,
-            bounds=constraints,
+            constraints=constraints,
+            bounds=bounds,
             dtype=dtype,
             len=vector_length,
             name=name,
@@ -1077,3 +1146,102 @@ class NetworkOptimizationProblem(OptimizationProblem):
             'send_times': self.scheduler.get_node_send_times(),
             'working_times': self.scheduler.get_node_working_times()
         }
+
+    def net_status(self, solution: list):
+        """
+        Выводит подробную информацию о состоянии сети в красивом форматировании.
+        
+        Параметры:
+        ----------
+        scheduler : TaskScheduler
+            Планировщик задач с информацией о сети
+        """
+
+        self.scheduler.calculate_schedule(solution)
+
+        # Цвета для форматирования
+        HEADER = '\033[95m'
+        BLUE = '\033[94m'
+        GREEN = '\033[92m'
+        WARNING = '\033[93m'
+        FAIL = '\033[91m'
+        ENDC = '\033[0m'
+        BOLD = '\033[1m'
+        
+        def print_separator(char="=", length=50):
+            print(BLUE + char * length + ENDC)
+            
+        def print_section_header(text):
+            print(HEADER + BOLD + f"\n{text:^50}" + ENDC)
+            print_separator()
+        
+        # Получаем статистику
+        stats = self.scheduler.get_timing_statistics()
+        
+        # Заголовок
+        print_section_header("СОСТОЯНИЕ СЕТИ")
+        
+        # Информация о узлах
+        print_section_header("ХАРАКТЕРИСТИКИ УЗЛОВ")
+        for i, node in enumerate(self.scheduler.net_graph.nodes):
+            print(f"{GREEN}Узел {i}:{ENDC}")
+            print(f"├─ Вычислительная мощность: {BOLD}{node.p:.4f}{ENDC}")
+            print(f"├─ Время работы: {BOLD}{stats['working_times'].get(i, 0):.4f}{ENDC}")
+            print(f"├─ Время отправки данных: {BOLD}{stats['send_times'].get(i, 0):.4f}{ENDC}")
+            print(f"└─ Время приема данных: {BOLD}{stats['receive_times'].get(i, 0):.4f}{ENDC}")
+        
+        # Информация о задачах
+        print_section_header("РАСПРЕДЕЛЕНИЕ ЗАДАЧ")
+        current_node = None
+        for task, node in sorted(self.scheduler.node_assignments.items(), key=lambda x: x[1]):
+            if current_node != node:
+                if current_node is not None:
+                    print(f"└{'─' * 30}")
+                current_node = node
+                print(f"\n{GREEN}Узел {node}:{ENDC}")
+            workload = self.scheduler.task_graph.operations[task].w
+            print(f"├─ Задача {task} (сложность: {workload})")
+        
+        # Информация о передачах данных
+        print_section_header("ПЕРЕДАЧИ ДАННЫХ")
+        if self.scheduler.data_transfers:
+            for src, dst, start, end, task, successor in self.scheduler.data_transfers:
+                duration = end - start
+                print(f"{BLUE}Передача T{task}→T{successor}:{ENDC}")
+                print(f"├─ Маршрут: Узел {src} → Узел {dst}")
+                print(f"├─ Время начала: {start:.2f}")
+                print(f"├─ Время окончания: {end:.2f}")
+                print(f"└─ Длительность: {duration:.2f}")
+        else:
+            print(f"{WARNING}Нет передач данных между узлами{ENDC}")
+        
+        # Общая статистика
+        print_section_header("ОБЩАЯ СТАТИСТИКА")
+        print(f"Общее время выполнения: {BOLD}{stats['total_time']:.2f}{ENDC}")
+        print(f"Количество передач: {BOLD}{stats['transfer_count']}{ENDC}")
+        
+        # Загрузка узлов
+        print_section_header("ЗАГРУЗКА УЗЛОВ")
+        for node in range(len(self.scheduler.net_graph.nodes)):
+            total_time = stats['total_time']
+            working_time = stats['working_times'].get(node, 0)
+            utilization = (working_time / total_time) * 100 if total_time > 0 else 0
+            
+            # Создаем визуальную шкалу загрузки
+            bar_length = 20
+            filled_length = int(utilization / 100 * bar_length)
+            bar = '█' * filled_length + '░' * (bar_length - filled_length)
+            
+            # Выбираем цвет в зависимости от загрузки
+            if utilization < 30:
+                color = FAIL
+            elif utilization < 70:
+                color = WARNING
+            else:
+                color = GREEN
+                
+            print(f"Узел {node}: {color}{bar}{ENDC} {utilization:.1f}%")
+        
+        print_separator("=", 50)
+
+        print(self.get_info(solution))
