@@ -6,11 +6,15 @@ from dataclasses import dataclass
 import functools
 import matplotlib.pyplot as plt
 from collections import defaultdict
-from dataclasses import dataclass
 import matplotlib.patches as mpatches
 from matplotlib.path import Path
 from matplotlib.patches import PathPatch
 from matplotlib.lines import Line2D
+from typing import Tuple, Dict, List
+from dataclasses import dataclass
+from typing import Dict, Any
+import numpy as np
+
 
 
 class OptimizationProblem:
@@ -334,7 +338,7 @@ class OptimizationProblem:
            в векторе решения и, если они есть, вычисляется значение функции
         """
         # Вычисляем значения основных целевых функций
-        base_objectives = [f(vector, self) for name, f in self.f_objective.items()]
+        base_objectives = [f(vector, self) for f in self.f_objective]
         
         # Вычисляем значения специальных функций для конкретных узлов
         node_specific_objectives = []
@@ -529,54 +533,476 @@ class IntegerOptimizationProblem(OptimizationProblem):
 
 
 @dataclass
-class NetNode:
-    p: int = 0
-    e0: int = 1
-    eMax: int = 1
+class NetworkNode:
+    id: int
+    performance: float  # Производительность
+    e_receive: float = 0.0  # Энергозатраты на прием
+    e_comp: float    = 0.0  # Энергозатраты на вычисления
+    e_send: float    = 0.0  # Энергозатраты на отправку
+    cost: float      = 0.0  # Стоимость устройства
+    failure_rate: float = 0.0  # Интенсивность отказов
+
+    def __str__(self) -> str:
+        return f"Node {self.id} - Performance: {self.performance}"
+
+    def get_node_performance(self) -> float:
+        """
+        Возвращает производительность узла
+        """
+        # Этот метод должен быть реализован в зависимости от вашей структуры сети
+        return self.performance
+
 
 class NetGraph:
-    def __init__(self, martx, net_power = (100, 2500), net_power_arr = None, e0 = (0,70), emax = (70,100), net_speed = 1000) -> None:
-        self.graph = nx.Graph(np.array(martx))
-        self.net_speed = net_speed
-        if net_power_arr is not None:
-            self.nodes = [NetNode(net_power_arr[i], np.random.randint(e0[0], e0[1]), np.random.randint(emax[0], emax[1])) for i in range(self.graph.number_of_nodes())]
+    def __init__(self, graph_type: int = 1, matrix=None, net_power=(100, 2500)) -> None:
+        """
+        Инициализация графа сети
+
+        Args:
+            graph_type: Тип графа (1 - сложный, 2 - линейный)
+            matrix: Матрица смежности (если None, используется предустановленная топология)
+            net_power: Диапазон производительности для случайной генерации
+        """
+        self.graph_type = graph_type
+        if matrix is not None:
+            self.graph = nx.Graph(np.array(matrix))
+            self._create_nodes_from_matrix(net_power)
         else:
-            self.nodes = [NetNode(np.random.randint(net_power[0], net_power[1]), np.random.randint(e0[0], e0[1]), np.random.randint(emax[0], emax[1])) \
-                      for _ in range(self.graph.number_of_nodes())]
-        
-        
-    def __str__(self) -> str:
-        return '\n'.join([f'{node}' for node in self.nodes])
-    
-    def print(self):
-        pos = nx.spring_layout(self.graph, seed=100)
-        nx.draw(self.graph, pos, with_labels=True, font_color='white')
+            self.graph, self.nodes = self._create_predefined_network()
 
-@dataclass
-class TaskNode:
-    w: int = 0
+    def _create_nodes_from_matrix(self, net_power):
+        """Создание узлов на основе матрицы смежности"""
+        self.nodes = {}
+        for i in range(self.graph.number_of_nodes()):
+            self.nodes[i] = NetworkNode(
+                id=i,
+                performance=np.random.randint(net_power[0], net_power[1]),
+                e_receive=np.random.uniform(0.1, 0.5),
+                e_comp=np.random.uniform(0.2, 0.8),
+                e_send=np.random.uniform(0.1, 0.5),
+                cost=np.random.randint(net_power[0], net_power[1]) * np.random.uniform(0.8, 1.2)
+            )
 
-class TaskGraph:
-    def __init__(self, martx, w = (100,600), w_arr = None) -> None:
-        self.graph = nx.DiGraph(np.array(martx))
-        if w_arr is not None:
-            self.operations = [TaskNode(w_arr[i]) for i in range(self.graph.number_of_nodes())]
+    def _create_predefined_network(self):
+        """Создание предустановленной сети"""
+        if self.graph_type == 1:
+            return self._create_complex_network()
         else:
-            self.operations = [TaskNode(np.random.randint(w[0], w[1])) for _ in range(self.graph.number_of_nodes())]
+            return self._create_linear_network()
 
-    def __str__(self) -> str:
-        return '\n'.join([f'{o}' for o in self.operations])
-    
-    def print(self):
-        options = {
-            'width': 1,
-            'arrowstyle': '-|>',
-            'arrowsize': 18,
+    def _create_complex_network(self):
+        """Создание сложной сети (первый пример)"""
+        network = nx.Graph()
+
+        # Производительность узлов
+        performances = {
+            0: 100, 1: 500, 2: 500, 3: 1000,
+            4: 1000, 5: 1000, 6: 5000, 7: 5000, 8: 5000
         }
 
-        pos = nx.planar_layout(self.graph, center = [10, 10], scale = 20)
-        nx.draw(self.graph, pos, with_labels=True, font_color='white', **options)
-        nx.draw_networkx_edge_labels(self.graph, pos, {(x, y): z['weight'] for (x, y, z) in nx.to_edgelist(self.graph)},font_color='red')
+        # Ребра с пропускной способностью
+        edges = [
+            (0, 2, 500), (0, 1, 500), (1, 4, 1000),
+            (1, 3, 1000), (2, 4, 1000), (2, 5, 1000),
+            (5, 6, 5000), (5, 7, 5000), (4, 7, 5000),
+            (4, 8, 5000), (3, 8, 5000)
+        ]
+
+        nodes = self._create_nodes(performances)
+        self._add_edges(network, edges, nodes)
+        return network, nodes
+
+    def _create_linear_network(self):
+        """Создание линейной сети (второй пример)"""
+        network = nx.Graph()
+
+        # Производительность узлов
+        performances = {
+            0: 1000, 1: 1500, 2: 2000,
+            3: 3000, 4: 10000
+        }
+
+        # Ребра с пропускной способностью
+        edges = [
+            (0, 1, 500), (1, 2, 500),
+            (2, 3, 500), (3, 4, 500)
+        ]
+
+        nodes = self._create_nodes(performances)
+        self._add_edges(network, edges, nodes)
+        return network, nodes
+
+    def _create_nodes(self, performances):
+        """Создание узлов с заданными характеристиками"""
+        nodes = {}
+        for node_id, perf in performances.items():
+            nodes[node_id] = NetworkNode(
+                id=node_id,
+                performance=perf,
+                e_receive=np.random.uniform(0.1, 0.5),
+                e_comp=np.random.uniform(0.2, 0.8),
+                e_send=np.random.uniform(0.1, 0.5),
+                cost=perf * np.random.uniform(0.8, 1.2)
+            )
+        return nodes
+
+    def _add_edges(self, network, edges, nodes):
+        """Добавление узлов и ребер в сеть"""
+        for node in nodes.values():
+            network.add_node(node.id)
+        for (u, v, bandwidth) in edges:
+            network.add_edge(u, v, bandwidth=bandwidth)
+
+    def visualize(self):
+        """Визуализация сети"""
+        if self.graph_type == 1:
+            self._visualize_complex()
+        else:
+            self._visualize_linear()
+
+    def _visualize_complex(self):
+        """Визуализация сложной сети"""
+        plt.figure(figsize=(15, 10))
+
+        pos = {
+            0: (-2, 0), 1: (-1, -1), 2: (-1, 1),
+            3: (0, -2), 4: (0, 0), 5: (0, 2),
+            6: (1, 3), 7: (1, 1), 8: (1, -1)
+        }
+
+        self._draw_network(pos)
+
+    def _visualize_linear(self):
+        """Визуализация линейной сети"""
+        plt.figure(figsize=(15, 5))
+
+        pos = {i: (i, 0) for i in range(len(self.nodes))}
+
+        self._draw_network(pos)
+
+    def _draw_network(self, pos):
+        """Отрисовка сети"""
+        ax = plt.gca()
+
+        # Рисуем узлы
+        node_colors = [self.nodes[n].get_node_performance() for n in self.graph.nodes()]
+        nodes_draw = nx.draw_networkx_nodes(
+            self.graph, pos,
+            node_color=node_colors,
+            node_size=1500,
+            cmap=plt.cm.viridis,
+            ax=ax
+        )
+
+        # Рисуем ребра
+        nx.draw_networkx_edges(
+            self.graph, pos,
+            width=2,
+            edge_color='gray',
+            alpha=0.6
+        )
+
+        # Добавляем метки
+        edge_labels = nx.get_edge_attributes(self.graph, 'bandwidth')
+        nx.draw_networkx_edge_labels(self.graph, pos, edge_labels, font_size=10)
+
+        labels = {n: f"Node {n}\n({self.nodes[n].get_node_performance()})" for n in self.graph.nodes()}
+        nx.draw_networkx_labels(self.graph, pos, labels, font_size=10)
+
+        plt.colorbar(nodes_draw, ax=ax, label='Performance')
+
+        plt.title(f"{'Complex' if self.graph_type == 1 else 'Linear'} Network Topology")
+        plt.axis('off')
+        plt.tight_layout()
+        plt.show()
+
+    def print_info(self):
+        """Вывод информации о сети"""
+        print("\nNetwork Properties:")
+        print(f"Network type: {'Complex' if self.graph_type == 1 else 'Linear'}")
+        print(f"Number of nodes: {self.graph.number_of_nodes()}")
+        print(f"Number of edges: {self.graph.number_of_edges()}")
+        print("\nNodes:")
+        for node in self.nodes.values():
+            print(str(node))
+        print("\nEdge bandwidths:")
+        for (u, v, data) in self.graph.edges(data=True):
+            print(f"Edge {u}-{v}: {data['bandwidth']}")
+
+    def get_node_by_id(self, node_id: int) -> NetworkNode:
+        """
+        Возвращает узел сети по его ID
+        """
+        for node in self.nodes:
+            if node.id == node_id:
+                return node
+        raise ValueError(f"Узел с ID {node_id} не найден")    
+
+@dataclass
+class Task:
+    id: int
+    complexity: float  # Вычислительная сложность
+    input_data: float  # Объем входных данных
+    output_data: float # Объем выходных данных
+    deadline: float    # Предельное время выполнения
+
+    def get_task_complexity(self) -> float:
+        """
+        Возвращает производительность узла
+        """
+        # Этот метод должен быть реализован в зависимости от вашей структуры сети
+        return self.complexity
+    
+
+class TaskGraph:
+    def __init__(self, graph_type: int = 1):
+        """
+        Инициализация графа задач
+
+        Args:
+            graph_type: Тип графа (1 - сложный, 2 - простой, 3 - полносвязный)
+        """
+        self.graph_type = graph_type
+        self.graph, self.operations = self._create_task_graph()
+
+    def _create_task_graph(self) -> Tuple[nx.DiGraph, Dict[int, Task]]:
+        """Создание графа задач выбранного типа"""
+        if self.graph_type == 1:
+            return self._create_complex_task_graph()
+        elif self.graph_type == 2:
+            return self._create_simple_task_graph()
+        else:
+            return self._create_fully_connected_task_graph()
+
+    def _create_complex_task_graph(self) -> Tuple[nx.DiGraph, Dict[int, Task]]:
+        """Создание сложного графа задач (первый пример)"""
+        task_graph = nx.DiGraph()
+
+        # Параметры задач
+        tasks_params = {
+            0: {"complexity": 100, "deadline": 500},  # Начальная задача
+            1: {"complexity": 300, "deadline": 600},  # Верхняя ветвь
+            2: {"complexity": 200, "deadline": 700},
+            3: {"complexity": 100, "deadline": 800},
+            4: {"complexity": 300, "deadline": 600},  # Средняя ветвь
+            5: {"complexity": 200, "deadline": 700},
+            6: {"complexity": 100, "deadline": 800},
+            7: {"complexity": 300, "deadline": 600},  # Нижняя ветвь
+            8: {"complexity": 200, "deadline": 700},
+            9: {"complexity": 50, "deadline": 1000}   # Конечная задача
+        }
+
+        # Ребра с объемами передаваемых данных
+        edges = [
+            (0, 1, 10000), (1, 2, 2000), (2, 3, 1000), (3, 9, 500),
+            (0, 4, 10000), (4, 5, 2000), (5, 6, 1000), (6, 9, 500),
+            (0, 7, 10000), (7, 8, 2000), (8, 6, 500)
+        ]
+
+        return self._create_graph_structure(task_graph, tasks_params, edges)
+
+    def _create_simple_task_graph(self) -> Tuple[nx.DiGraph, Dict[int, Task]]:
+        """Создание простого графа задач (второй пример)"""
+        task_graph = nx.DiGraph()
+
+        tasks_params = {
+            0: {"complexity": 1000, "deadline": 500},
+            1: {"complexity": 5000, "deadline": 700},
+            2: {"complexity": 5000, "deadline": 700},
+            3: {"complexity": 5000, "deadline": 700},
+            4: {"complexity": 1000, "deadline": 1000}
+        }
+
+        edges = [
+            (0, 1, 1000), (0, 2, 1000), (0, 3, 1000),
+            (1, 4, 1000), (2, 4, 1000), (3, 4, 1000)
+        ]
+
+        return self._create_graph_structure(task_graph, tasks_params, edges)
+
+    def _create_fully_connected_task_graph(self) -> Tuple[nx.DiGraph, Dict[int, Task]]:
+        """Создание полносвязного графа задач (третий пример)"""
+        task_graph = nx.DiGraph()
+
+        tasks_params = {
+            0: {"complexity": 10000, "deadline": 500},
+            1: {"complexity": 10000, "deadline": 500},
+            2: {"complexity": 10000, "deadline": 500},
+            3: {"complexity": 10000, "deadline": 500}
+        }
+
+        edges = [
+            (0, 1, 500), (0, 2, 500), (0, 3, 500),
+            (1, 2, 500), (1, 3, 500),
+            (2, 1, 500), (2, 3, 500),
+            (3, 1, 500), (3, 2, 500)
+        ]
+
+        return self._create_graph_structure(task_graph, tasks_params, edges)
+
+    def _create_graph_structure(self, task_graph: nx.DiGraph,
+                              tasks_params: Dict, edges: List) -> Tuple[nx.DiGraph, Dict[int, Task]]:
+        """Создание структуры графа"""
+        tasks = {}
+
+        # Создаем узлы графа и задачи
+        for task_id, params in tasks_params.items():
+            task_graph.add_node(task_id)
+            tasks[task_id] = Task(
+                id=task_id,
+                complexity=params["complexity"],
+                input_data=0.0,  # Будет обновлено после добавления ребер
+                output_data=0.0, # Будет обновлено после добавления ребер
+                deadline=params["deadline"]
+            )
+
+        # Добавляем ребра и обновляем входные/выходные данные
+        for (u, v, data) in edges:
+            task_graph.add_edge(u, v, data_volume=data)
+            tasks[v].input_data += data
+            tasks[u].output_data += data
+
+        return task_graph, tasks
+
+    def visualize(self):
+        """Визуализация графа задач"""
+        plt.figure(figsize=(15, 10))
+        ax = plt.gca()
+
+        # Определяем позиции узлов в зависимости от типа графа
+        if self.graph_type == 1:
+            pos = {
+                0: (-2, 0), 1: (0, 2), 2: (2, 2), 3: (4, 2),
+                4: (0, 0), 5: (2, 0), 6: (4, 0),
+                7: (0, -2), 8: (2, -2), 9: (6, 0)
+            }
+        elif self.graph_type == 2:
+            pos = {
+                0: (-2, 0),
+                1: (0, 2), 2: (0, 0), 3: (0, -2),
+                4: (2, 0)
+            }
+        else:
+            pos = {
+                0: (-1, 1), 1: (1, 1),
+                2: (-1, -1), 3: (1, -1)
+            }
+
+        self._draw_graph(ax, pos)
+
+    def _draw_graph(self, ax, pos):
+        """Отрисовка графа"""
+        # Рисуем узлы
+        node_colors = [self.operations[n].complexity for n in self.graph.nodes()]
+        nodes_draw = nx.draw_networkx_nodes(
+            self.graph, pos,
+            node_color=node_colors,
+            node_size=1500,
+            cmap=plt.cm.viridis,
+            ax=ax
+        )
+
+        # Рисуем направленные ребра
+        nx.draw_networkx_edges(
+            self.graph, pos,
+            edge_color='gray',
+            width=2,
+            arrowsize=25,  # Увеличенный размер стрелок
+            arrowstyle='-|>',  # Явно заданный стиль стрелок
+            connectionstyle='arc3, rad=0.1',  # Изогнутые линии для лучшей видимости направления
+            min_source_margin=25,  # Отступ от начала стрелки
+          min_target_margin=25   # Отступ от конца стрелки
+        )
+
+        # Добавляем метки
+        edge_labels = nx.get_edge_attributes(self.graph, 'data_volume')
+        nx.draw_networkx_edge_labels(self.graph, pos, edge_labels, font_size=10)
+
+        labels = {n: f"Task {n}\n({self.operations[n].complexity})"
+                 for n in self.graph.nodes()}
+        nx.draw_networkx_labels(self.graph, pos, labels, font_size=10)
+
+        # Добавляем colorbar
+        plt.colorbar(nodes_draw, ax=ax, label='Computational Complexity')
+
+        # Находим и выделяем критический путь
+        critical_path = self.find_critical_path()
+        if critical_path:
+            path_edges = list(zip(critical_path[:-1], critical_path[1:]))
+            nx.draw_networkx_edges(
+                self.graph, pos,
+                edgelist=path_edges,
+                edge_color='red',
+                width=3
+            )
+
+        plt.title(f"Task Graph Type {self.graph_type} with Critical Path")
+        plt.axis('off')
+        plt.tight_layout()
+        plt.show()
+
+    def find_critical_path(self) -> List[int]:
+        """Находит критический путь в графе задач"""
+        sources = [n for n in self.graph.nodes()
+                  if self.graph.in_degree(n) == 0]
+        sinks = [n for n in self.graph.nodes()
+                if self.graph.out_degree(n) == 0]
+
+        if not sources or not sinks:
+            return None
+
+        max_length = 0
+        critical_path = None
+
+        for source in sources:
+            for sink in sinks:
+                for path in nx.all_simple_paths(self.graph, source, sink):
+                    length = self._calculate_path_length(path)
+                    if length > max_length:
+                        max_length = length
+                        critical_path = path
+
+        return critical_path
+
+    def _calculate_path_length(self, path: List[int]) -> float:
+        """Рассчитывает длину пути"""
+        length = sum(self.operations[node].complexity for node in path)
+        length += sum(self.graph[path[i]][path[i+1]]['data_volume']
+                     for i in range(len(path)-1))
+        return length
+
+    def print_info(self):
+        """Вывод информации о графе задач"""
+        print(f"\nTask Graph Type {self.graph_type} Properties:")
+        print(f"Number of tasks: {self.graph.number_of_nodes()}")
+        print(f"Number of dependencies: {self.graph.number_of_edges()}")
+        print(f"Total computational complexity: "
+              f"{sum(self.operations[n].complexity for n in self.graph.nodes())}")
+        print(f"Total data transfer: "
+              f"{sum(d['data_volume'] for (u,v,d) in self.graph.edges(data=True))}")
+
+        critical_path = self.find_critical_path()
+        if critical_path:
+            print("\nCritical Path Information:")
+            print(f"Path: {' -> '.join(map(str, critical_path))}")
+            print(f"Length: {self._calculate_path_length(critical_path)}")
+
+    def get_task_by_id(self, task_id: int) -> Task:
+        """
+        Возвращает задачу по ее ID
+        """
+        for task in self.operations:
+            if task.id == task_id:
+                return task
+        raise ValueError(f"Задача с ID {task_id} не найдена")
+
+
+@dataclass
+class NodeStats:
+    compute_load: float = 0.0    # Вычислительная нагрузка в операциях
+    receive_load: float = 0.0    # Нагрузка на прием в байтах
+    send_load: float = 0.0       # Нагрузка на отправку в байтах
+    end_time: float = 0.0
 
 class TaskScheduler:
     """
@@ -614,10 +1040,9 @@ class TaskScheduler:
             Скорость передачи данных между узлами
         """
         try:
-            return self.net_graph.graph[node1][node2]['weight']  
+            return self.net_graph.graph[node1][node2]['bandwidth']  
         except:
             return self.net_graph.net_speed  # Возвращаем дефолтную скорость если не задана
-
 
     def assign_tasks_to_nodes(self, distribution):
         """
@@ -680,7 +1105,7 @@ class TaskScheduler:
             
             # Расчет времени выполнения задачи
             start_time = current_time[node]
-            duration = self.task_graph.operations[task].w / self.net_graph.nodes[node].p
+            duration = self.task_graph.operations[task].get_task_complexity() / self.net_graph.nodes[node].get_node_performance()
             end_time = start_time + duration
 
             # Добавление задачи в расписание
@@ -693,7 +1118,7 @@ class TaskScheduler:
                 
                 # Если задачи на разных узлах - планируем передачу данных
                 if successor_node != node:
-                    data_volume = self.task_graph.graph[task][successor]['weight']
+                    data_volume = self.task_graph.graph[task][successor]['data_volume']
                     path = self.shortest_path(node, successor_node)
                     
                     # Обработка каждого узла в пути передачи
@@ -702,7 +1127,7 @@ class TaskScheduler:
                         
                         # Прием данных (кроме начального узла)
                         if i > 0:
-                            receive_time = data_volume / self.net_graph.nodes[current_node].p
+                            receive_time = data_volume / self.net_graph.nodes[current_node].get_node_performance()
                             receive_start = current_time[current_node]
                             receive_end = receive_start + receive_time
                             self.schedule[current_node].append((f"Receive T{task}->{successor}", receive_start, receive_end, 'receive'))
@@ -710,7 +1135,7 @@ class TaskScheduler:
 
                         # Отправка данных (кроме конечного узла)
                         if i < len(path) - 1:
-                            send_time = data_volume / self.net_graph.nodes[current_node].p
+                            send_time = data_volume / self.net_graph.nodes[current_node].get_node_performance()
                             send_start = current_time[current_node]
                             send_end = send_start + send_time
                             self.schedule[current_node].append((f"Send T{task}->{successor}", send_start, send_end, 'send'))
@@ -908,117 +1333,129 @@ class TaskScheduler:
         
         plt.show()
 
-    def print_info(self):
-        """Вывод основной информации о распределении задач и характеристиках узлов"""
-        self._print_node_powers()
-        self._print_task_workloads()
-        self._print_task_assignments()
-        self._print_data_transfers()
-
-    def _print_node_powers(self):
-        """Вывод информации о вычислительной мощности узлов"""
-        print("\nNode Power:")
-        for i, node in enumerate(self.net_graph.nodes):
-            print(f"Node {i}: power {node.p}")
-
-    def _print_task_workloads(self):
-        """Вывод информации о вычислительной сложности задач"""
-        print("\nTask Workload:")
-        for i, operation in enumerate(self.task_graph.operations):
-            print(f"Task {i}: workload {operation.w}")
-
-    def _print_task_assignments(self):
-        """Вывод информации о распределении задач по узлам"""
-        print("\nTask Assignment to Nodes:")
-        for task, node in self.node_assignments.items():
-            print(f"Task {task} assigned to node {node}")
-
-    def _print_data_transfers(self):
-        """Вывод информации о передачах данных между узлами"""
-        print("\nData Transfers:")
-        for src, dst, start, end, task, successor in self.data_transfers:
-            print(f"From task {task} to task {successor}: "
-                f"node {src} -> node {dst}, time: {start:.2f} - {end:.2f}")
-
-    def get_timing_statistics(self):
+    def get_complete_analysis(self, distribution: list):
         """
-        Получение статистики времени для всех типов операций на узлах
-        
-        Returns:
-            dict: Словарь со статистикой времени для каждого узла
+        Полный анализ системы с учетом реальной нагрузки и временных характеристик
         """
-        return {
-            'total_time': self.get_total_execution_time(),
-            'working_times': self.get_node_working_times(),
-            'send_times': self.get_node_send_times(),
-            'receive_times': self.get_node_receive_times(),
-            'transfer_count': self.get_transfer_count()
+
+        self.calculate_schedule(distribution)
+
+        analysis = {
+            'nodes': {
+                node_id: {
+                    'performance': self.net_graph.nodes[node].get_node_performance(),
+                    'compute_load': 0.0,  # в операциях
+                    'data_received': 0.0, # в байтах
+                    'data_sent': 0.0,     # в байтах
+                    'working_time': 0.0,
+                    'send_time': 0.0,
+                    'receive_time': 0.0
+                } 
+                for node_id, node in enumerate(self.net_graph.nodes)
+            },
+            'tasks': {
+                task_id: {
+                    'complexity': self.task_graph.operations[task].get_task_complexity(),
+                    'assigned_node': self.node_assignments.get(task_id),
+                    'execution_time': 0.0
+                }
+                for task_id, task in enumerate(self.task_graph.operations)
+            },
+            'transfers': [],
+            'statistics': {
+                'total_time': 0.0,
+                'total_operations': 0.0,
+                'total_data_transferred': 0.0,
+                'transfer_count': 0
+            }
         }
 
-    def get_node_send_times(self):
-        """Расчет времени отправки данных для каждого узла"""
-        return self._calculate_node_times('send')
+        # Анализ назначения и выполнения задач
+        for task_id, node_id in self.node_assignments.items():
+            task_complexity = self.task_graph.operations[task_id].get_task_complexity()
+            analysis['nodes'][node_id]['compute_load'] += task_complexity
+            analysis['statistics']['total_operations'] += task_complexity
 
-    def get_node_receive_times(self):
-        """Расчет времени приема данных для каждого узла"""
-        return self._calculate_node_times('receive')
+        # Анализ расписания и передач данных
+        for node_id, tasks in self.schedule.items():
+            node_stats = analysis['nodes'][node_id]
+            
+            for task_name, start, end, task_type in tasks:
+                duration = end - start
+                
+                if task_type == 'task':
+                    node_stats['working_time'] += duration
+                elif task_type == 'send':
+                    node_stats['send_time'] += duration
+                elif task_type == 'receive':
+                    node_stats['receive_time'] += duration
 
-    def get_node_working_times(self):
-        """Расчет общего рабочего времени для каждого узла"""
-        node_working_times = defaultdict(float)
-        for node, tasks in self.schedule.items():
-            node_working_times[node] = sum(end - start for _, start, end, _ in tasks)
-        return dict(node_working_times)
+        # Анализ передач данных
+        for src, dst, start, end, task, successor in self.data_transfers:
+            data_volume = self.task_graph.graph[task][successor]['data_volume']
+            
+            analysis['nodes'][src]['data_sent'] += data_volume
+            analysis['nodes'][dst]['data_received'] += data_volume
+            analysis['statistics']['total_data_transferred'] += data_volume
+            
+            transfer_info = {
+                'from_task': task,
+                'to_task': successor,
+                'from_node': src,
+                'to_node': dst,
+                'data_volume': data_volume,
+                'start_time': start,
+                'end_time': end
+            }
+            analysis['transfers'].append(transfer_info)
 
-    def _calculate_node_times(self, operation_type):
-        """
-        Вспомогательный метод для расчета времени операций определенного типа
-        
-        Args:
-            operation_type (str): Тип операции ('send' или 'receive')
-        """
-        node_times = defaultdict(float)
-        for node, tasks in self.schedule.items():
-            node_times[node] = sum(
-                end - start 
-                for _, start, end, task_type in tasks 
-                if task_type == operation_type
+        analysis['statistics']['transfer_count'] = len(self.data_transfers)
+        analysis['statistics']['total_time'] = (
+            max(
+                max(end for _, _, end, _ in tasks)
+                for tasks in self.schedule.values()
+                if tasks
             )
-        return dict(node_times)
+            if self.schedule else 0
+        )
 
-    def get_transfer_count(self):
-        """Получение общего количества передач данных"""
-        return len(self.data_transfers)
+        return analysis
 
-    def print_extended_info(self):
-        """Вывод расширенной информации о выполнении задач"""
-        stats = self.get_timing_statistics()
-        
-        print("\nРасширенная информация:")
-        print(f"Общее время выполнения комплекса задач: {stats['total_time']:.2f}")
-        
-        self._print_timing_info("Время работы каждого узла", stats['working_times'])
-        self._print_timing_info("Время отправки данных", stats['send_times'])
-        self._print_timing_info("Время приема данных", stats['receive_times'])
-        
-        print("\nИнформация о скоростях передачи данных между узлами:")
-        for edge in self.net_graph.graph.edges():
-            speed = self.get_edge_speed(edge[0], edge[1])
-            print(f"Между узлами {edge[0]} и {edge[1]}: {speed:.2f}")
-        
-        print(f"\nОбщее количество пересылок между задачами: {stats['transfer_count']}")
-
-    def _print_timing_info(self, title, timing_dict):
+    def print_complete_analysis(self):
         """
-        Вспомогательный метод для вывода временной информации
-        
-        Args:
-            title (str): Заголовок для вывода
-            timing_dict (dict): Словарь с временными данными
+        Вывод полного анализа системы
         """
-        print(f"\n{title}:")
-        for node, time in timing_dict.items():
-            print(f"Узел {node}: {time:.2f}")
+        analysis = self.get_complete_analysis()
+        
+        print("\nАНАЛИЗ СИСТЕМЫ")
+        print("=" * 50)
+        
+        # Информация об узлах
+        print("\nХарактеристики и нагрузка узлов:")
+        for node_id, node_info in analysis['nodes'].items():
+            print(f"\nУзел {node_id}:")
+            print(f"  Производительность: {node_info['performance']} оп/с")
+            print(f"  Вычислительная нагрузка: {node_info['compute_load']} операций")
+            print(f"  Принято данных: {node_info['data_received']} байт")
+            print(f"  Отправлено данных: {node_info['data_sent']} байт")
+            print(f"  Время работы: {node_info['working_time']:.2f}")
+            print(f"  Время на передачу: {node_info['send_time']:.2f}")
+            print(f"  Время на прием: {node_info['receive_time']:.2f}")
+
+        # Информация о задачах
+        print("\nИнформация о задачах:")
+        for task_id, task_info in analysis['tasks'].items():
+            print(f"Задача {task_id}:")
+            print(f"  Сложность: {task_info['complexity']} операций")
+            print(f"  Назначена на узел: {task_info['assigned_node']}")
+
+        # Общая статистика
+        stats = analysis['statistics']
+        print("\nОбщая статистика:")
+        print(f"Общее время выполнения: {stats['total_time']:.2f}")
+        print(f"Общее количество операций: {stats['total_operations']}")
+        print(f"Общий объем переданных данных: {stats['total_data_transferred']} байт")
+        print(f"Количество передач данных: {stats['transfer_count']}")
 
 
 class NetworkOptimizationProblem(OptimizationProblem):
@@ -1199,7 +1636,7 @@ class NetworkOptimizationProblem(OptimizationProblem):
                     print(f"└{'─' * 30}")
                 current_node = node
                 print(f"\n{GREEN}Узел {node}:{ENDC}")
-            workload = self.scheduler.task_graph.operations[task].w
+            workload = self.scheduler.task_graph.operations[task].get_task_complexity()
             print(f"├─ Задача {task} (сложность: {workload})")
         
         # Информация о передачах данных
