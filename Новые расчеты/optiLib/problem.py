@@ -10,9 +10,8 @@ import matplotlib.patches as mpatches
 from matplotlib.path import Path
 from matplotlib.patches import PathPatch
 from matplotlib.lines import Line2D
-from typing import Tuple, Dict, List
 from dataclasses import dataclass
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple, Optional, Union
 import numpy as np
 
 
@@ -588,19 +587,25 @@ class NetGraph:
         """Создание пользовательской сети"""
         network = nx.Graph()
         nodes = {}
-        
         # Создание узлов
-        for node_id, params in nodes_params.items():
-            nodes[node_id] = NetworkNode(
-                id=node_id,
-                performance=params["performance"],
-                e_receive=params.get("e_receive", 0.0),
-                e_comp=params.get("e_comp", 0.0),
-                e_send=params.get("e_send", 0.0),
-                cost=params.get("cost", 0.0),
-                operation_cost=params.get("operation_cost", 0.0),
-                failure_rate=params.get("failure_rate", 0.0)
-            )
+        for node_id, node_data in nodes_params.items():
+            if isinstance(node_data, NetworkNode):
+                # Используем существующий объект
+                current_node = node_data
+            else:
+                # Создаем новый NetworkNode из параметров
+                current_node = NetworkNode(
+                    id=node_id,
+                    performance=node_data.get("performance", 0.0),
+                    e_receive=node_data.get("e_receive", 0.0),
+                    e_comp=node_data.get("e_comp", 0.0),
+                    e_send=node_data.get("e_send", 0.0),
+                    cost=node_data.get("cost", 0.0),
+                    operation_cost=node_data.get("operation_cost", 0.0),
+                    failure_rate=node_data.get("failure_rate", 0.0)
+                )
+            # Добавляем в результат и в граф
+            nodes[node_id] = current_node
             network.add_node(node_id)
         
         # Добавление рёбер
@@ -791,10 +796,15 @@ class NetGraph:
         """
         Возвращает узел сети по его ID
         """
-        for node in self.nodes:
+        for nodeid, node in self.nodes.items():
             if node.id == node_id:
                 return node
         raise ValueError(f"Узел с ID {node_id} не найден")    
+
+    def get_node_performance(self, node_id: int):
+        return self.get_node_by_id(node_id).get_node_performance()
+
+
 
 @dataclass
 class Task:
@@ -802,7 +812,6 @@ class Task:
     complexity: float  # Вычислительная сложность
     input_data: float  # Объем входных данных
     output_data: float # Объем выходных данных
-    deadline: float    # Предельное время выполнения
 
     def get_task_complexity(self) -> float:
         """
@@ -923,8 +932,7 @@ class TaskGraph:
                 id=task_id,
                 complexity=params["complexity"],
                 input_data=0.0,  # Будет обновлено после добавления ребер
-                output_data=0.0, # Будет обновлено после добавления ребер
-                deadline=params["deadline"]
+                output_data=0.0 # Будет обновлено после добавления ребер 
             )
 
         # Добавляем ребра и обновляем входные/выходные данные
@@ -1106,10 +1114,7 @@ class TaskScheduler:
         
     def __init__(self, task_graph, net_graph, 
                  model_type: int = 1,
-                 intermediate_node_params: dict = None,
-                 intermediate_nodes_params: list = None,
-                 channel_types: dict = None,
-                 bandwidth_factor: float = 2.0):
+                 original_net_graph = None):
         """
         Инициализация планировщика
         
@@ -1137,92 +1142,9 @@ class TaskScheduler:
             )
         """
         self.task_graph = task_graph
-        self.original_net_graph = net_graph
+        self.original_net_graph = original_net_graph
         self.model_type = model_type
-        
-        # Создаем сетевой граф в зависимости от модели
-        if model_type == 3:
-            self.net_graph = self._create_model3_net_graph(
-                intermediate_nodes_params,
-                channel_types,
-                bandwidth_factor
-            )
-        elif model_type == 2:
-            self.net_graph = self._create_model2_net_graph(
-                intermediate_node_params,
-                bandwidth_factor
-            )
-        else:
-            self.net_graph = net_graph
-
-    def _create_model2_net_graph(self, bus_params: dict, bandwidth_factor: float):
-        """Создает граф с магистралью (model_type=2)"""
-        bus_id = max(self.original_net_graph.nodes) + 1
-        nodes = self.original_net_graph.nodes.copy()
-        
-        # Добавляем магистраль
-        nodes[bus_id] = NetworkNode(
-            id=bus_id,
-            performance=bus_params.get('performance', 1000),
-            cost=bus_params.get('cost', 0)
-        )
-        
-        # Создаем ребра через магистраль
-        edges = []
-        for u, v, data in self.original_net_graph.graph.edges(data=True):
-            new_bandwidth = data['bandwidth'] * bandwidth_factor
-            edges.extend([
-                (u, bus_id, new_bandwidth),
-                (bus_id, v, new_bandwidth)
-            ])
-        
-        return NetGraph(
-            graph_type=3,
-            nodes_params=nodes,
-            edges=edges
-        )
-
-    def _create_model3_net_graph(self, nodes_params_list: list, 
-                               channel_types: dict, bandwidth_factor: float):
-        """Создает граф с промежуточными узлами (model_type=3)"""
-        original_nodes = self.original_net_graph.nodes.copy()
-        max_id = max(original_nodes.keys())
-        intermediate_nodes = []
-        
-        # Создаем промежуточные узлы
-        for idx, params in enumerate(nodes_params_list):
-            machine_id = max_id + idx + 1
-            original_nodes[machine_id] = NetworkNode(
-                id=machine_id,
-                performance=params.get("performance", 0),
-                cost=params.get("cost", 0)
-            )
-            intermediate_nodes.append(machine_id)
-        
-        # Создаем ребра с учетом каналов
-        edges = []
-        for u, v, data in self.original_net_graph.graph.edges(data=True):
-            for ch_name, ch_params in channel_types.items():
-                new_bandwidth = data['bandwidth'] * ch_params['bandwidth_multiplier']
-                machine = np.random.choice(intermediate_nodes)
-                edges.extend([
-                    (u, machine, {
-                        'bandwidth': new_bandwidth,
-                        'channel_type': ch_name,
-                        'cost_multiplier': ch_params['cost_multiplier']
-                    }),
-                    (machine, v, {
-                        'bandwidth': new_bandwidth,
-                        'channel_type': ch_name,
-                        'cost_multiplier': ch_params['cost_multiplier']
-                    })
-                ])
-        
-        return NetGraph(
-            graph_type=3,
-            nodes_params=original_nodes,
-            edges=edges
-        )
+        self.net_graph = net_graph
 
     def get_edge_speed(self, node1, node2):
         """
@@ -1243,257 +1165,286 @@ class TaskScheduler:
         except:
             return self.net_graph.net_speed  # Возвращаем дефолтную скорость если не задана
 
-    def assign_tasks_to_nodes(self, distribution):
+    def calculate_schedule(
+            self, 
+            distribution: List[int], 
+            custom_paths: Optional[Dict[Tuple[int, int], List[int]]] = None,
+            allow_parallel: bool = False
+        ) -> Tuple[Dict[int, List[Tuple]], List[Tuple]]:
         """
-        Создает словарь соответствия задач узлам сети.
+        Рассчитывает расписание выполнения задач и передач данных с учетом:
+        - Зависимостей задач
+        - Топологии сети
+        - Специфики моделей (магистрали, промежуточные узлы)
         
         Параметры:
         ----------
-        distribution : list
-            Список распределения задач по узлам
-            
+        distribution : list[int]
+            Список, где индекс - ID задачи, значение - ID назначаемого узла
+        custom_paths : dict, optional
+            Пользовательские пути передачи данных в формате { (task_from, task_to): [node_path] }
+        allow_parallel : bool
+            Если True, разрешает параллельные операции на узле (кроме промежуточных)
+        
         Возвращает:
         -----------
-        dict
-            Словарь {номер_задачи: номер_узла}
+        schedule : dict
+            Расписание для каждого узла: {node_id: [(название_операции, start, end, тип), ...]}
+        data_transfers : list
+            Список передач данных: [(src_node, dst_node, start, end, task_from, task_to), ...]
         """
-        return {task: distribution[task] for task in range(len(distribution))}
-
-    def shortest_path(self, start, end):
-        """
-        Находит кратчайший путь между узлами в графе сети.
         
-        Параметры:
-        ----------
-        start : int
-            Начальный узел
-        end : int
-            Конечный узел
-            
-        Возвращает:
-        -----------
-        list
-            Список узлов, составляющих кратчайший путь
-        """
-        return nx.shortest_path(self.net_graph.graph, start, end)
-
-    def calculate_schedule(self, distribution: list):
-        """
-        Переработанный метод расчета расписания с корректировкой передач данных:
-        - Фиксация времени передач с учетом пропускной способности каналов
-        - Корректная обработка асинхронных операций
-        - Гарантия последовательного выполнения операций в узлах
-        """
-        self.node_assignments = {i: distribution[i] for i in range(len(distribution))}
-        self.schedule = defaultdict(list)
-        self.data_transfers = []
-        current_time = defaultdict(float)
-        self.data_available = defaultdict(float) # Время доступности данных для задач
+        self.schedule = defaultdict(list)  # Сброс расписания
+        self.data_transfers = []  # Сброс списка передач
+        self.current_time = defaultdict(float)  # Сброс времени
         
+        # Инициализация назначения задач
+        self.node_assignments = self.assign_tasks_to_nodes(distribution)
+        
+        # Инициализация: Если custom_paths не предоставлен, используем пустой словарь
+        if custom_paths is None:
+            custom_paths = {}
+
+        # Инициализация расписания "бездействия" для всех узлов
+        for node in self.net_graph.nodes:
+            self.schedule[node].append(('Idle', 0.0, 0.0, 'idle'))
+
+        # Обход задач в топологическом порядке (от корневых к листьям)
         for task in nx.topological_sort(self.task_graph.graph):
             node = self.node_assignments[task]
-            duration = self.task_graph.operations[task].complexity / self.net_graph.nodes[node].performance
-            start_time = max(current_time[node], self.data_available.get(task, 0.0))
-            wait_time = start_time - current_time[node]
-            
-            if wait_time > 0:
-                self.schedule[node].append((
-                    f"Wait for T{task}",
-                    current_time[node],
-                    start_time,
-                    'wait'
-                ))
-            
-            end_time = start_time + duration
+            start_time = self.current_time[node]
+
+            # Расчет времени выполнения задачи
+            task_duration = (
+                self.task_graph.operations[task].get_task_complexity() 
+                / self.net_graph.get_node_performance(node)
+            )
+            end_time = start_time + task_duration
+
+            # Добавление задачи в расписание
             self.schedule[node].append((task, start_time, end_time, 'task'))
-            current_time[node] = end_time
-            
+            self._update_time(node, end_time, allow_parallel)  # Обновление времени узла
+
+            # Обработка зависимостей: для каждой задачи-наследника
             for successor in self.task_graph.graph.successors(task):
                 successor_node = self.node_assignments[successor]
-                data_volume = self.task_graph.graph[task][successor]['data_volume']
-                
-                if node != successor_node:
-                    if self.model_type == 1:
-                        self._handle_original_transfer(node, successor_node, task, successor, data_volume, current_time)
-                    else:
-                        self._handle_data_transfer(node, successor_node, task, successor, data_volume, current_time)
-                else:
-                    # Если задачи на одном узле - данные доступны сразу
-                    self.data_available[successor] = max(
-                        self.data_available.get(successor, 0.0),
-                        end_time
+                if successor_node != node:  # Требуется передача данных
+                    data_volume = self.task_graph.graph[task][successor]['data_volume']
+                    
+                    # Определение пути:
+                    # 1. Использовать пользовательский путь, если он указан
+                    # 2. Иначе - кратчайший путь
+                    path = custom_paths.get(
+                        (task, successor), 
+                        self.get_shortest_path(node, successor_node)
                     )
 
-    def _get_transfer_end_time(self, task, successor, data_volume, src_node, dst_node, current_time):
-        """Расчет времени завершения передачи данных"""
-        if self.model_type == 1:
-            path = self.shortest_path(src_node, dst_node)
-            transfer_end = 0
-            
-            # Фаза отправки
-            send_end = current_time[src_node] + data_volume / self.net_graph.nodes[src_node].performance
-            transfer_end = max(transfer_end, send_end)
-            
-            # Фаза передачи по каналам
-            prev_node = src_node
-            for node in path[1:-1]:
-                channel_speed = self.get_edge_speed(prev_node, node)
-                transfer_time = data_volume / channel_speed
-                transfer_start = max(current_time[prev_node], current_time[node])
-                transfer_end = transfer_start + transfer_time
-                prev_node = node
-            
-            # Фаза приема
-            receive_end = transfer_end + data_volume / self.net_graph.nodes[dst_node].performance
-            return max(transfer_end, receive_end)
-        
-        elif self.model_type == 2:
-            bus_id = max(self.net_graph.nodes.keys())
-            send_end = current_time[src_node] + data_volume / self.net_graph.nodes[src_node].performance
-            transfer_end = max(send_end, current_time[bus_id]) + data_volume / self.net_graph.nodes[bus_id].performance
-            receive_end = max(transfer_end, current_time[dst_node]) + data_volume / self.net_graph.nodes[dst_node].performance
-            return receive_end
-        
-        elif self.model_type == 3:
-            channel = self._select_optimal_channel(src_node, dst_node)
-            send_end = current_time[src_node] + data_volume / self.net_graph.nodes[src_node].performance
-            transfer_time = data_volume / channel['bandwidth']
-            transfer_end = max(send_end, current_time[channel['node']]) + transfer_time
-            receive_end = max(transfer_end, current_time[dst_node]) + data_volume / self.net_graph.nodes[dst_node].performance
-            return receive_end
+                    # Передача не может начаться раньше завершения задачи
+                    transfer_start = end_time
 
-    def _select_optimal_channel(self, src: int, dst: int) -> dict:
-        """Улучшенный выбор канала с учетом задержек"""
-        candidates = []
-        for channel_node in self.net_graph.intermediate_nodes:
-            if self.net_graph.graph.has_edge(src, channel_node) and \
-            self.net_graph.graph.has_edge(channel_node, dst):
-                bandwidth = min(
-                    self.net_graph.graph[src][channel_node]['bandwidth'],
-                    self.net_graph.graph[channel_node][dst]['bandwidth']
-                )
-                latency = self.net_graph.graph[src][channel_node]['latency'] + \
-                        self.net_graph.graph[channel_node][dst]['latency']
-                candidates.append({
-                    'node': channel_node,
-                    'bandwidth': bandwidth,
-                    'latency': latency
-                })
-        if not candidates:
-            raise ValueError(f"Нет доступных каналов между {src} и {dst}")
-        
-        # Приоритет: выше bandwidth, ниже latency
-        return max(candidates, key=lambda x: (x['bandwidth'], -x['latency']))
+                    # Обработка передачи данных
+                    transfer_info = self._process_data_transfer(
+                        path, 
+                        data_volume, 
+                        transfer_start, 
+                        allow_parallel, 
+                        task, 
+                        successor
+                    )
 
-    def _handle_original_transfer(self, src, dst, task, successor, data_volume, current_time):
-        try:
-            path = self.shortest_path(src, dst)
-        except nx.NetworkXNoPath:
-            raise ValueError(f"Нет пути между узлами {src} и {dst} для передачи данных")
-        
-        # Фаза 1: Отправка
-        send_time = data_volume / self.net_graph.nodes[src].performance
-        send_start = current_time[src]
-        send_end = send_start + send_time
-        self.schedule[src].append((f"Send T{task}->{successor}", send_start, send_end, 'send'))
-        current_time[src] = send_end
+                    # Обновление времени для конечного узла
+                    last_node = path[-1]
+                    self.current_time[last_node] = max(
+                        self.current_time[last_node], 
+                        transfer_info['end_time']
+                    )
 
-        # Фаза 2: Промежуточные узлы
-        prev_node = src
-        for i in range(1, len(path)-1):
-            current_node = path[i]
-            channel_speed = self.get_edge_speed(prev_node, current_node)
-            transfer_time = data_volume / channel_speed
-            transfer_start = max(current_time[prev_node], current_time[current_node])
-            transfer_end = transfer_start + transfer_time
-            
-            self.data_transfers.append((prev_node, current_node, transfer_start, transfer_end, task, successor))
-            current_time[prev_node] = max(current_time[prev_node], transfer_end)
-            current_time[current_node] = max(current_time[current_node], transfer_end)
-            
-            # Обработка в промежуточном узле
-            proc_time = data_volume / self.net_graph.nodes[current_node].performance
-            proc_start = current_time[current_node]
-            proc_end = proc_start + proc_time
-            self.schedule[current_node].append((f"Proc T{task}->{successor}", proc_start, proc_end, 'transfer'))
-            current_time[current_node] = proc_end
-            prev_node = current_node
+        # Сортировка событий и заполнение промежутков
+        for node in self.schedule:
+            self.schedule[node].sort(key=lambda x: x[1])
+            self._fill_gaps(node)  # Добавление событий "бездействия"
 
-        # Фаза 3: Прием
-        last_link_speed = self.get_edge_speed(path[-2], dst)
-        last_transfer_time = data_volume / last_link_speed
-        last_transfer_start = max(current_time[path[-2]], current_time[dst])
-        last_transfer_end = last_transfer_start + last_transfer_time
-        
-        self.data_transfers.append((path[-2], dst, last_transfer_start, last_transfer_end, task, successor))
-        current_time[path[-2]] = max(current_time[path[-2]], last_transfer_end)
-        
-        receive_time = data_volume / self.net_graph.nodes[dst].performance
-        receive_start = current_time[dst]
-        receive_end = receive_start + receive_time
-        self.schedule[dst].append((f"Recv T{task}->{successor}", receive_start, receive_end, 'receive'))
-        current_time[dst] = receive_end
-        self.data_available[successor] = max(
-            self.data_available.get(successor, 0.0),
-            receive_end
-        )
+        return dict(self.schedule), self.data_transfers
 
-    def _handle_data_transfer(self, src, dst, task, successor, data_volume, current_time):
-        if self.model_type == 2:
-            bus_id = max(self.net_graph.nodes.keys())
+    def _process_data_transfer(
+            self,
+            path: List[int],
+            data_volume: float,
+            initial_start: float,
+            allow_parallel: bool,
+            task: int,
+            successor: int
+        ) -> Dict:
+        """
+        Обрабатывает передачу данных по заданному пути
+
+        Параметры:
+        ----------
+        path : list[int]
+            Путь передачи: список узлов от источника к получателю
+        data_volume : float
+            Объем передаваемых данных
+        initial_start : float
+            Минимальное время начала передачи (не раньше этого момента)
+        allow_parallel : bool
+            Разрешение параллельных операций на узлах
+        task : int
+            ID исходной задачи
+        successor : int
+            ID целевой задачи
+
+        Возвращает:
+        -----------
+        transfer_info : dict
+            {'start_time': ..., 'end_time': ...}
+        """
+        transfer_info = {
+            'start_time': initial_start,
+            'end_time': initial_start
+        }
+        
+        # Время, когда данные доступны на каждом узле пути
+        data_arrival_time = {path[0]: initial_start}
+        
+        # Проходим по всем парам соседних узлов в пути
+        for i in range(len(path) - 1):
+            src_node = path[i]
+            dst_node = path[i+1]
+            is_src_intermediate = src_node not in self.original_net_graph.nodes
             
-            # Отправка
-            send_time = data_volume / self.net_graph.nodes[src].performance
-            send_start = current_time[src]
-            send_end = send_start + send_time
-            self.schedule[src].append((f"Send T{task}->{successor}", send_start, send_end, 'send'))
-            current_time[src] = send_end
+            # 1. Отправка данных с узла src_node
+            send_start = max(self.current_time[src_node], data_arrival_time[src_node])
+            send_duration = data_volume / self.net_graph.get_node_performance(src_node)
+            send_end = send_start + send_duration
             
-            # Передача через магистраль
-            transfer_time = data_volume / self.net_graph.nodes[bus_id].performance
-            transfer_start = max(current_time[src], current_time[bus_id])
-            transfer_end = transfer_start + transfer_time
-            self.schedule[bus_id].append((f"Transfer T{task}->{successor}", transfer_start, transfer_end, 'transfer'))
-            self.data_transfers.append((src, dst, transfer_start, transfer_end, task, successor))
-            current_time[bus_id] = transfer_end
+            # Добавляем операцию отправки в расписание
+            self.schedule[src_node].append((f"Send_{task}_{successor}", send_start, send_end, 'send'))
             
-            # Прием
-            receive_time = data_volume / self.net_graph.nodes[dst].performance
-            receive_start = max(current_time[bus_id], current_time[dst])
-            receive_end = receive_start + receive_time
-            self.schedule[dst].append((f"Recv T{task}->{successor}", receive_start, receive_end, 'receive'))
-            current_time[dst] = receive_end
-            self.data_available[successor] = max(
-                self.data_available.get(successor, 0.0),
-                receive_end
-            )
+            # Обновляем время узла, если он не промежуточный и не разрешены параллельные операции
+            if not is_src_intermediate and not allow_parallel:
+                self._update_time(src_node, send_end, allow_parallel)
             
-        elif self.model_type == 3:
-            best_channel = self._select_optimal_channel(src, dst)
-            channel_speed = best_channel['bandwidth']
-            transfer_time = data_volume / channel_speed
+            # 2. Передача данных по сети между узлами
+            edge_speed = self.get_edge_speed(src_node, dst_node)
+            network_time = data_volume / edge_speed
+            transfer_start = send_end  # Передача начинается сразу после завершения отправки
+            transfer_end = transfer_start + network_time
             
-            # Отправка
-            send_start = current_time[src]
-            send_end = send_start + (data_volume / self.net_graph.nodes[src].performance)
-            self.schedule[src].append((f"Send T{task}->{successor}", send_start, send_end, 'send'))
-            current_time[src] = send_end
+            # Добавляем информацию о передаче данных
+            self.data_transfers.append((
+                src_node,
+                dst_node,
+                transfer_start,
+                transfer_end,
+                task,
+                successor
+            ))
             
-            # Передача
-            transfer_start = max(current_time[src], current_time[best_channel['node']])
-            transfer_end = transfer_start + transfer_time
-            self.data_transfers.append((src, dst, transfer_start, transfer_end, task, successor))
-            current_time[best_channel['node']] = transfer_end
-            
-            # Прием
-            receive_start = max(transfer_end, current_time[dst])
-            receive_end = receive_start + (data_volume / self.net_graph.nodes[dst].performance)
-            self.schedule[dst].append((f"Recv T{task}->{successor}", receive_start, receive_end, 'receive'))
-            current_time[dst] = receive_end
-            self.data_available[successor] = max(
-                self.data_available.get(successor, 0.0),
-                receive_end
-            )
+            # Данные доступны на следующем узле после завершения передачи
+            data_arrival_time[dst_node] = transfer_end
+        
+        # 3. Прием данных на последнем узле
+        last_node = path[-1]
+        is_last_intermediate = last_node not in self.original_net_graph.nodes
+        
+        receive_start = data_arrival_time[last_node]  # Начало приема после прибытия данных
+        receive_duration = data_volume / self.net_graph.get_node_performance(last_node)
+        receive_end = receive_start + receive_duration
+        
+        # Добавляем операцию приема в расписание последнего узла
+        self.schedule[last_node].append((f"Receive_{task}_{successor}", receive_start, receive_end, 'receive'))
+        
+        # Обновляем время узла, если он не промежуточный и не разрешены параллельные операции
+        if not is_last_intermediate and not allow_parallel:
+            self._update_time(last_node, receive_end, allow_parallel)
+        
+        # Обновляем информацию о времени передачи
+        transfer_info['start_time'] = send_start if len(path) > 1 else receive_start
+        transfer_info['end_time'] = receive_end
+        
+        return transfer_info
+
+
+    def _update_time(self, node: int, new_time: float, allow_parallel: bool):
+        """
+        Обновляет текущее время узла с учетом параллелизма
+        
+        Параметры:
+        ----------
+        node : int
+            ID узла
+        new_time : float
+            Новое время для проверки
+        allow_parallel : bool
+            Если True, разрешает параллельные операции (минимум)
+            Если False, операции выполняются последовательно (максимум)
+        """
+        if not allow_parallel:
+            # Последовательное выполнение: время не может уменьшаться
+            if self.current_time[node] < new_time:
+                self.current_time[node] = new_time
+        else:
+            # Параллельное выполнение: можно начинать операции раньше
+            self.current_time[node] = min(self.current_time[node], new_time)
+
+    def _fill_gaps(self, node: int):
+        """
+        Добавляет события "бездействия" между операциями в расписании
+        
+        Параметры:
+        ----------
+        node : int
+            ID узла для обработки
+        """
+        events = sorted(self.schedule[node], key=lambda x: x[1])
+        filled = []
+        prev_end = 0.0
+        for event in events:
+            if event[1] > prev_end:
+                # Добавление промежутка бездействия
+                filled.append((
+                    'Idle',
+                    prev_end,
+                    event[1],
+                    'idle'
+                ))
+            filled.append(event)
+            prev_end = event[2]
+        self.schedule[node] = filled  # Обновление расписания с промежутками
+
+    def get_shortest_path(self, source: int, target: int) -> List[int]:
+        """
+        Находит кратчайший путь между узлами в сети
+        
+        Параметры:
+        ----------
+        source : int
+            Начальный узел
+        target : int
+            Конечный узел
+        
+        Возвращает:
+        -----------
+        path : list[int]
+            Список узлов пути
+        """
+        return nx.shortest_path(self.net_graph.graph, source, target)
+
+    def assign_tasks_to_nodes(self, distribution: List[int]) -> Dict[int, int]:
+        """
+        Создает отображение {task_id: node_id} на основе распределения
+        
+        Параметры:
+        ----------
+        distribution : list[int]
+            Список, где индекс - ID задачи, значение - ID узла
+        
+        Возвращает:
+        -----------
+        assignments : dict
+            Словарь соответствия задач и узлов
+        """
+        return {task_id: node_id for task_id, node_id in enumerate(distribution)}
 
     def get_total_execution_time(self):
         end_times = [max(tasks, key=lambda x: x[2])[2] for tasks in self.schedule.values()]
@@ -1508,9 +1459,7 @@ class TaskScheduler:
         """
         import matplotlib.pyplot as plt
         import matplotlib.patches as mpatches
-        from matplotlib.path import Path
 
-        # Настройки визуализации
         plt.rcParams.update({
             'figure.figsize': (25.6, 14.4),
             'figure.dpi': 100,
@@ -1539,13 +1488,18 @@ class TaskScheduler:
         total_time = self.get_total_execution_time()
 
         # Подготовка узлов
-        display_nodes = list(self.net_graph.nodes.keys())
+        all_nodes = list(self.net_graph.nodes.keys())
+        
         if self.model_type == 2:
-            bus_node = max(display_nodes)
-            display_nodes = [n for n in display_nodes if n != bus_node] + [bus_node]
+            # Для model_type=2 выделяем bus_node как отдельный
+            bus_node = max(all_nodes)
+            display_nodes = [n for n in all_nodes if n != bus_node] + [bus_node]
         elif self.model_type == 3:
+            # Для model_type=3 разделяем оригинальные и промежуточные узлы
             original_count = len(self.original_net_graph.nodes)
-            display_nodes = sorted(display_nodes, key=lambda x: (x >= original_count, x))
+            display_nodes = sorted(all_nodes, key=lambda x: (x >= original_count, x))
+        else:
+            display_nodes = all_nodes
 
         # Отрисовка узлов и операций
         y_ticks = []
@@ -1557,14 +1511,21 @@ class TaskScheduler:
             # Формирование подписи узла
             label = f"Node {node_id}"
             if self.model_type == 2 and node_id == max(display_nodes):
-                label = f"Bus Node {node_id}"
+                label = f"BUS Node {node_id}"
             elif self.model_type == 3 and node_id >= len(self.original_net_graph.nodes):
-                label = f"Interm. Node {node_id}"
+                label = f"Intermediate Node {node_id}"
             y_labels.append(label)
+
+            # Цвет фона узла
+            bg_color = 'whitesmoke'
+            if self.model_type == 2 and node_id == max(display_nodes):
+                bg_color = '#F0F0F0'  # Светло-серый для bus_node
+            elif self.model_type == 3 and node_id >= len(self.original_net_graph.nodes):
+                bg_color = '#E0E0E0'  # Серый для промежуточных узлов
 
             # Фоновая полоса узла
             ax.barh(y_pos, total_time, height=node_height, left=0,
-                    color='whitesmoke', edgecolor='gray', alpha=0.5)
+                    color=bg_color, edgecolor='gray', alpha=0.8)
             
             # Отрисовка операций
             if node_id in self.schedule:
@@ -1572,58 +1533,54 @@ class TaskScheduler:
                     task, start, end, task_type = entry
                     duration = end - start
 
+                    # Настройки цвета и стиля
                     if task_type == 'task':
                         color = colors['task']
                         bar_height = node_height * 0.8
                         alpha = 0.9
                         label_text = f'T{task}'
-                        z_order = 1  # Основные задачи ниже
-                    elif task_type == 'transfer':
-                        color = colors['transfer']
-                        bar_height = node_height * 0.5
-                        alpha = 0.7
-                        label_text = 'Transfer'
-                        z_order = 2
+                        z_order = 1
                     elif task_type == 'send':
                         color = colors['send']
                         bar_height = node_height * 0.4
-                        alpha = 0.6
-                        label_text = 'Send'
+                        alpha = 0.7
+                        label_text = 'SEND'
                         z_order = 3
                     elif task_type == 'receive':
                         color = colors['receive']
                         bar_height = node_height * 0.4
-                        alpha = 0.6
-                        label_text = 'Receive'
+                        alpha = 0.7
+                        label_text = 'RECV'
                         z_order = 3
-                    elif task_type == 'wait':
-                        color = '#D3D3D3'
-                        bar_height = node_height * 0.3
-                        alpha = 0.4
-                        label_text = 'Waiting'
-                        z_order = 4  # Время ожидания поверх всех
+                    elif task_type == 'transfer':
+                        color = colors['transfer']
+                        bar_height = node_height * 0.6
+                        alpha = 0.6
+                        label_text = 'TRANSFER'
+                        z_order = 2
                     else:
                         continue
 
-                    # Позиционирование для 'wait' операций
-                    if task_type == 'wait':
-                        y_pos_adjusted = y_pos - node_height * 0.3  # Смещаем вниз
-                    elif task_type in ['send', 'receive']:
-                        y_offset = node_height * 0.3
-                        y_pos_adjusted = y_pos + (y_offset if task_type == 'send' else -y_offset)
+                    # Позиционирование для send/receive
+                    y_offset = 0.3 * node_height
+                    if task_type == 'send':
+                        y_pos_adjusted = y_pos + y_offset
+                    elif task_type == 'receive':
+                        y_pos_adjusted = y_pos - y_offset
                     else:
                         y_pos_adjusted = y_pos
 
-                    # Отрисовка с учётом z_order
-                    ax.barh(y_pos_adjusted, duration, left=start, height=bar_height,
-                            color=color, alpha=alpha, edgecolor='black', zorder=z_order)
+                    # Отрисовка полосы
+                    ax.barh(y_pos_adjusted, duration, left=start,
+                            height=bar_height, color=color, 
+                            alpha=alpha, edgecolor='black', zorder=z_order)
 
-                    # Всегда показываем метки для 'wait' операций
-                    if task_type == 'wait' or duration > 0.02 * total_time:
+                    # Добавление метки
+                    if duration > 0.02 * total_time:
                         ax.text(start + duration/2, y_pos_adjusted, label_text,
                                 ha='center', va='center',
-                                bbox=dict(facecolor='white', alpha=0.8, edgecolor=color),
-                                zorder=z_order + 5)  # Текст поверх полос
+                                bbox=dict(facecolor='white', alpha=0.8),
+                                zorder=z_order + 2)
 
         # Отрисовка передач данных
         for transfer in self.data_transfers:
@@ -1636,18 +1593,18 @@ class TaskScheduler:
             except ValueError:
                 continue
 
-            # Параметры стрелки
+            # Стили для передачи
+            color = colors['transfer']
             arrow_style = '-|>' if self.model_type != 2 else '->'
             connection_style = f"arc3,rad={0.3 if y_src != y_dst else 0}"
-            color = colors['transfer']
-            
-            # Для model_type=2 добавляем промежуточную точку (магистраль)
+
             if self.model_type == 2:
+                # Для шины model_type=2 добавляем промежуточную точку
                 bus_node = max(display_nodes)
                 y_bus = display_nodes.index(bus_node) * 1.2
                 mid_x = start + duration/2
-                
-                # Первая часть: отправитель -> магистраль
+
+                # Первый этап: отправитель → шина
                 ax.annotate('', 
                         xy=(mid_x, y_bus), 
                         xytext=(start, y_src),
@@ -1657,7 +1614,7 @@ class TaskScheduler:
                                         alpha=0.8,
                                         connectionstyle=connection_style))
                 
-                # Вторая часть: магистраль -> получатель
+                # Второй этап: шина → получатель
                 ax.annotate('', 
                         xy=(end, y_dst), 
                         xytext=(mid_x, y_bus),
@@ -1667,15 +1624,15 @@ class TaskScheduler:
                                         alpha=0.8,
                                         connectionstyle=connection_style))
                 
-                # Метки для двухэтапной передачи
-                ax.text(mid_x, (y_src + y_bus)/2, f'T{task}→Bus',
-                        ha='center', va='center',
+                # Добавление меток для передачи
+                ax.text(mid_x, (y_src + y_bus)/2, f"T{task} → Bus",
+                        ha='center', va='center', fontsize=8,
                         bbox=dict(facecolor='white', alpha=0.8))
-                ax.text(mid_x, (y_bus + y_dst)/2, f'Bus→T{succ}',
-                        ha='center', va='center',
+                ax.text(mid_x, (y_bus + y_dst)/2, f"Bus → T{succ}",
+                        ha='center', va='center', fontsize=8,
                         bbox=dict(facecolor='white', alpha=0.8))
             else:
-                # Одноэтапная передача для других моделей
+                # Прямая передача для других моделей
                 ax.annotate('', 
                         xy=(end, y_dst), 
                         xytext=(start, y_src),
@@ -1687,8 +1644,8 @@ class TaskScheduler:
                 
                 # Метка передачи
                 mid_x = start + duration/2
-                ax.text(mid_x, (y_src + y_dst)/2, f'T{task}→T{succ}\n{duration:.2f}s',
-                        ha='center', va='center',
+                ax.text(mid_x, (y_src + y_dst)/2, f"T{task} → T{succ}",
+                        ha='center', va='center', fontsize=8,
                         bbox=dict(facecolor='white', alpha=0.8))
 
         # Настройка осей и легенды
@@ -1699,81 +1656,41 @@ class TaskScheduler:
         ax.grid(True, axis='x', linestyle='--', alpha=0.7)
         ax.set_xlim(0, total_time * 1.05)
 
-        has_wait = any(entry[3] == 'wait' for node in self.schedule.values() for entry in node)
+        # Легенда
         legend_elements = [
             mpatches.Patch(color=colors['task'], label='Task Execution'),
             mpatches.Patch(color=colors['send'], label='Send Operation'),
             mpatches.Patch(color=colors['receive'], label='Receive Operation'),
             mpatches.Patch(color=colors['transfer'], label='Data Transfer'),
+            mpatches.Patch(color='#F0F0F0', label='Bus Node (Model 2)'),
+            mpatches.Patch(color='#E0E0E0', label='Intermediate Node (Model 3)')
         ]
-        if has_wait:
-            legend_elements.append(mpatches.Patch(color='#D3D3D3', label='Waiting Time'))
-        ax.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.15),
-                ncol=4, fancybox=True)
+        ax.legend(handles=legend_elements, 
+                loc='upper center', 
+                bbox_to_anchor=(0.5, -0.15),
+                ncol=3, 
+                fancybox=True)
 
         plt.tight_layout()
         plt.show()
 
     def get_complete_analysis(self, distribution: list):
         """
-        Полный анализ системы с метриками:
-        - Нагрузка на узлы
-        - Время выполнения задач
-        - Статистика передач данных
-        - Использование магистрали/каналов
-        
-        Args:
-            distribution (list): Распределение задач
-            
-        Returns:
-            dict: Структура с анализом в формате:
-            {
-                'model_type': 1,
-                'nodes': {0: {...}, 1: {...}},
-                'tasks': {0: {...}, 1: {...}},
-                'transfers': [...],
-                'statistics': {...}
-            }
-            
-        Пример:
-            analysis = scheduler.get_complete_analysis(distribution)
-            print(f"Общее время: {analysis['statistics']['total_time']:.2f}")
+        Полный анализ системы с учетом реальной нагрузки и временных характеристик
         """
         self.calculate_schedule(distribution)
 
-        # Определяем все узлы, включая промежуточные/магистраль
-        all_nodes = self.net_graph.nodes
-        if self.model_type == 2:
-            # Для model_type=2 добавляем магистраль в список узлов
-            bus_id = max(all_nodes.keys())
-            all_nodes = {**all_nodes, bus_id: self.net_graph.nodes[bus_id]}
-        elif self.model_type == 3:
-            # Для model_type=3 уже включены все промежуточные узлы
-            pass
-
+        # Важно: создаем словарь для всех узлов, которые есть в расписании,
+        # а не только для тех, что в original_net_graph
         analysis = {
-            'model_type': self.model_type,
-            'nodes': {
-                node_id: {
-                    'performance': node.get_node_performance(),
-                    'compute_load': 0.0,
-                    'data_received': 0.0,
-                    'data_sent': 0.0,
-                    'working_time': 0.0,
-                    'send_time': 0.0,
-                    'receive_time': 0.0,
-                    'is_bus': self.model_type == 2 and node_id == max(all_nodes.keys()),
-                    'is_intermediate': self.model_type == 3 and node_id >= len(self.original_net_graph.nodes)
-                } 
-                for node_id, node in all_nodes.items()
-            },
+            'nodes': {},
             'tasks': {
                 task_id: {
-                    'complexity': self.task_graph.operations[task_id].complexity,
+                    'complexity': self.task_graph.operations[task].get_task_complexity(),
                     'assigned_node': self.node_assignments.get(task_id),
                     'execution_time': 0.0
                 }
-                for task_id in self.task_graph.graph.nodes()
+                for task_id, task in enumerate(self.task_graph.operations)
             },
             'transfers': [],
             'statistics': {
@@ -1781,110 +1698,146 @@ class TaskScheduler:
                 'total_operations': 0.0,
                 'total_data_transferred': 0.0,
                 'transfer_count': 0,
-                'bus_usage': 0.0 if self.model_type == 2 else None,
-                'channel_usage': defaultdict(float) if self.model_type == 3 else None
+                'average_task_time': 0.0,
+                'max_node_load': 0.0,
+                'total_idle_time': 0.0,
+                'average_transfer_time': 0.0
             }
         }
+        
+        # Инициализация данных для всех узлов, включая промежуточные
+        for node_id in range(len(self.net_graph.nodes)):  # Используем метод nodes(), а не свойство nodes
+            if isinstance(node_id, int):  # Проверка, что ID узла - целое число
+                analysis['nodes'][node_id] = {
+                    'performance': self.net_graph.get_node_performance(node_id),
+                    'compute_load': 0.0,
+                    'data_received': 0.0,
+                    'data_sent': 0.0,
+                    'working_time': 0.0,
+                    'send_time': 0.0,
+                    'receive_time': 0.0,
+                    'idle_time': 0.0,
+                    'utilization': 0.0
+                }
 
-        # Анализ задач
+        # 1. Анализ назначения задач и вычислительной нагрузки
         for task_id, node_id in self.node_assignments.items():
-            task_complexity = self.task_graph.operations[task_id].complexity
+            task_complexity = self.task_graph.operations[task_id].get_task_complexity()
             analysis['nodes'][node_id]['compute_load'] += task_complexity
             analysis['statistics']['total_operations'] += task_complexity
 
-        # Анализ расписания
+        # 2. Анализ времени выполнения задач
         for node_id, tasks in self.schedule.items():
-            node_stats = analysis['nodes'][node_id]
-            for entry in tasks:
-                task_name, start, end, task_type = entry
-                duration = end - start
+            # Убедимся, что узел существует в словаре анализа
+            if node_id not in analysis['nodes']:
+                analysis['nodes'][node_id] = {
+                    'performance': self.net_graph.get_node_performance(node_id),
+                    'compute_load': 0.0,
+                    'data_received': 0.0,
+                    'data_sent': 0.0,
+                    'working_time': 0.0,
+                    'send_time': 0.0,
+                    'receive_time': 0.0,
+                    'idle_time': 0.0,
+                    'utilization': 0.0
+                }
                 
+            for event in tasks:
+                if event[3] == 'task':
+                    task_id = event[0]
+                    duration = event[2] - event[1]
+                    analysis['tasks'][task_id]['execution_time'] = duration
+
+        # 3. Анализ времени операций на узлах
+        for node_id, tasks in self.schedule.items():
+            # Проверяем, что узел существует в словаре анализа
+            if node_id not in analysis['nodes']:
+                continue
+                
+            node_stats = analysis['nodes'][node_id]
+            for task_name, start, end, task_type in tasks:
+                duration = end - start
                 if task_type == 'task':
                     node_stats['working_time'] += duration
-                    analysis['tasks'][int(task_name)]['execution_time'] = duration
                 elif task_type == 'send':
                     node_stats['send_time'] += duration
                 elif task_type == 'receive':
                     node_stats['receive_time'] += duration
-                elif task_type == 'transfer' and self.model_type == 2:
-                    # Учет работы магистрали
-                    node_stats['working_time'] += duration
-                    analysis['statistics']['bus_usage'] += duration
+                elif task_type == 'idle':
+                    node_stats['idle_time'] += duration
 
-        # Анализ передач данных
-        for transfer in self.data_transfers:
-            if self.model_type == 2:
-                # Для model_type=2: передача через магистраль
-                src, dst, start, end, task, succ = transfer
-                data_volume = self.task_graph.graph[task][succ]['data_volume']
+        # 4. Анализ передач данных
+        for src, dst, start, end, task, successor in self.data_transfers:
+            # Проверяем, что узлы существуют в словаре анализа
+            if src not in analysis['nodes'] or dst not in analysis['nodes']:
+                continue
                 
-                analysis['nodes'][src]['data_sent'] += data_volume
-                analysis['nodes'][dst]['data_received'] += data_volume
-                analysis['statistics']['total_data_transferred'] += data_volume
-                analysis['statistics']['transfer_count'] += 1
-                
-                transfer_info = {
-                    'from_task': task,
-                    'to_task': succ,
-                    'from_node': src,
-                    'to_node': dst,
-                    'data_volume': data_volume,
-                    'start_time': start,
-                    'end_time': end,
-                    'via_bus': True
-                }
-                
-            elif self.model_type == 3:
-                # Для model_type=3: передача через каналы
-                src, dst, start, end, task, succ = transfer
-                data_volume = self.task_graph.graph[task][succ]['data_volume']
-                channel_type = self.net_graph.graph[src][dst].get('channel_type', 'default')
-                
-                analysis['nodes'][src]['data_sent'] += data_volume
-                analysis['nodes'][dst]['data_received'] += data_volume
-                analysis['statistics']['total_data_transferred'] += data_volume
-                analysis['statistics']['transfer_count'] += 1
-                analysis['statistics']['channel_usage'][channel_type] += (end - start)
-                
-                transfer_info = {
-                    'from_task': task,
-                    'to_task': succ,
-                    'from_node': src,
-                    'to_node': dst,
-                    'data_volume': data_volume,
-                    'start_time': start,
-                    'end_time': end,
-                    'channel_type': channel_type
-                }
-                
-            else:
-                # Для model_type=1
-                src, dst, start, end, task, succ = transfer
-                data_volume = self.task_graph.graph[task][succ]['data_volume']
-                
-                analysis['nodes'][src]['data_sent'] += data_volume
-                analysis['nodes'][dst]['data_received'] += data_volume
-                analysis['statistics']['total_data_transferred'] += data_volume
-                analysis['statistics']['transfer_count'] += 1
-                
-                transfer_info = {
-                    'from_task': task,
-                    'to_task': succ,
-                    'from_node': src,
-                    'to_node': dst,
-                    'data_volume': data_volume,
-                    'start_time': start,
-                    'end_time': end
-                }
-                
+            data_volume = self.task_graph.graph[task][successor]['data_volume']
+            analysis['nodes'][src]['data_sent'] += data_volume
+            analysis['nodes'][dst]['data_received'] += data_volume
+            analysis['statistics']['total_data_transferred'] += data_volume
+
+            transfer_info = {
+                'from_task': task,
+                'to_task': successor,
+                'from_node': src,
+                'to_node': dst,
+                'data_volume': data_volume,
+                'start_time': start,
+                'end_time': end,
+                'transfer_time': end - start
+            }
             analysis['transfers'].append(transfer_info)
 
-        # Расчет общего времени
-        analysis['statistics']['total_time'] = max(
-            max(end for _, _, end, _ in tasks) for tasks in self.schedule.values() if tasks
-        ) if self.schedule else 0.0
+        # Рассчитываем общее время выполнения
+        if self.schedule:
+            max_end_times = []
+            for node_id, tasks in self.schedule.items():
+                if tasks:  # Проверяем, что список задач не пустой
+                    max_end_time = max(end for _, _, end, _ in tasks)
+                    max_end_times.append(max_end_time)
+            
+            if max_end_times:  # Проверяем, что список максимальных времен не пустой
+                analysis['statistics']['total_time'] = max(max_end_times)
+
+        # 5. Расчет дополнительных метрик для узлов
+        for node_id, node_stats in analysis['nodes'].items():
+            total_active_time = (node_stats['working_time'] +
+                                node_stats['send_time'] +
+                                node_stats['receive_time'])
+            
+            if analysis['statistics']['total_time'] > 0:
+                node_stats['idle_time'] = analysis['statistics']['total_time'] - total_active_time
+                node_stats['utilization'] = total_active_time / analysis['statistics']['total_time']
+            else:
+                node_stats['idle_time'] = 0
+                node_stats['utilization'] = 0
+
+        # 6. Финальные расчеты статистики
+        analysis['statistics']['transfer_count'] = len(self.data_transfers)
+
+        # Среднее время выполнения задач
+        task_times = [task['execution_time'] for task in analysis['tasks'].values()]
+        if task_times:
+            analysis['statistics']['average_task_time'] = sum(task_times) / len(task_times)
+
+        # Максимальная вычислительная нагрузка
+        node_loads = [node['compute_load'] for node in analysis['nodes'].values()]
+        if node_loads:
+            analysis['statistics']['max_node_load'] = max(node_loads)
+
+        # Общее время бездействия
+        analysis['statistics']['total_idle_time'] = sum(
+            node['idle_time'] for node in analysis['nodes'].values()
+        )
+
+        # Среднее время передачи данных
+        if analysis['transfers']:
+            total_transfer_time = sum(t['transfer_time'] for t in analysis['transfers'])
+            analysis['statistics']['average_transfer_time'] = total_transfer_time / len(analysis['transfers'])
 
         return analysis
+
 
     def print_complete_analysis(self, distribution):
         """
@@ -2008,7 +1961,12 @@ class NetworkOptimizationProblem(OptimizationProblem):
                  name: str = "NETproblem_1",
                  node_functions: list = None,
                  function_constraints: list = None,
-                 special_function_constraints: list = None):
+                 special_function_constraints: list = None,
+                 model_type = 1,                          
+                 intermediate_node_params = None,
+                 intermediate_nodes_params = None,
+                 bandwidth_factor=None   
+                 ):
         """
         Инициализация задачи оптимизации сети.
 
@@ -2026,18 +1984,33 @@ class NetworkOptimizationProblem(OptimizationProblem):
             function_constraints: Ограничения на функции
             special_function_constraints: Специальные ограничения
         """
-
+        self.model_type = model_type
         # Инициализация базовых параметров
-        self.network_graph = network_graph
         self.task_graph = task_graph
         self.t_lim = t_lim
         self.net_speed = net_speed
-        
+        self.original_net_graph = network_graph
+
+
         # Определение размерности вектора решения
         vector_length = task_graph.graph.number_of_nodes()
+
+        if model_type == 1:
+            self.network_graph = network_graph
+            # Формирование ограничений на распределение
+            bounds = self._create_constraints(bounds, vector_length)
+        elif model_type == 2:
+            default_constraints = {_:(0, max(self.original_net_graph.nodes)) for _ in range(vector_length)}
+            self.network_graph = self._create_model2_net_graph(intermediate_node_params, bandwidth_factor)
+            # Формирование ограничений на распределение
+            bounds = self._create_constraints(default_constraints, vector_length)
         
-        # Формирование ограничений на распределение
-        bounds = self._create_constraints(bounds, vector_length)
+        elif model_type == 3:
+            default_constraints = {_:(0, max(self.original_net_graph.nodes)) for _ in range(vector_length)}
+            self.network_graph = self._create_model3_net_graph(intermediate_nodes_params, bandwidth_factor)
+            # Формирование ограничений на распределение
+            bounds = self._create_constraints(default_constraints, vector_length)
+        
         
         # Инициализация родительского класса
         super().__init__(
@@ -2051,9 +2024,61 @@ class NetworkOptimizationProblem(OptimizationProblem):
             function_constraints=function_constraints,
             special_function_constraints=special_function_constraints
         )
-        
+
         # Создание планировщика задач
-        self.scheduler = TaskScheduler(task_graph, network_graph)
+        self.scheduler = TaskScheduler(task_graph, self.network_graph, model_type, self.original_net_graph)
+
+    def _create_model2_net_graph(self, bus_params: dict, bandwidth_factor: float):
+        """Создает граф с магистралью (model_type=2)"""
+        bus_id = max(self.original_net_graph.nodes) + 1
+        nodes = self.original_net_graph.nodes.copy()
+        
+        # Добавляем магистраль
+        nodes[bus_id] = NetworkNode(
+            id=bus_id,
+            performance=bus_params.get('performance', 1000),
+            cost=bus_params.get('cost', 0)
+        )
+        
+        edges = []
+        
+        # Устанавливаем базовую пропускную способность для соединений с магистралью
+        bus_bandwidth = bus_params.get('bandwidth', 1000)  # Предполагается, что bus_params содержит bandwidth
+        
+        # Создаем ребра от каждого исходного узла к магистрали
+        for node_id, node in self.original_net_graph.nodes.items():
+            edges.append((node_id, bus_id, bus_bandwidth * bandwidth_factor))
+
+        return NetGraph(
+            graph_type=3,
+            nodes_params=nodes,
+            edges=edges
+        )
+
+    def _create_model3_net_graph(self, nodes_params_list: list, bandwidth_factor: float):
+        """Создает граф с промежуточными узлами (model_type=3)"""
+        original_nodes = self.original_net_graph.nodes.copy()
+        max_id = max(original_nodes.keys())
+        
+        intermediate_nodes = []
+        edges = []
+        i = 1
+        # Создаем промежуточные узлы
+        for idx, params in nodes_params_list.items():
+            machine_id = max_id + i
+            i += 1 
+            original_nodes[machine_id] = params
+            intermediate_nodes.append(machine_id)
+            for node_id, node in self.original_net_graph.nodes.items():
+                edges.extend([
+                    (machine_id, node_id, params.get("bandwidth", 1000))
+                ])
+        
+        return NetGraph(
+            graph_type=3,
+            nodes_params=original_nodes,
+            edges=edges
+        )
 
     def _create_constraints(self, bounds: dict, vector_length: int) -> list:
         """
